@@ -12,4 +12,4 @@ class ChatSession(Base):
     created_at = Column(DateTime, default=func.now(), index=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True, index=True)
-    metadata = Column(JSON) 
+    session_metadata = Column(JSON) 

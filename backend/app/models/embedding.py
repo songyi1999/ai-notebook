@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, LargeBinary, Float, ForeignKey
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, LargeBinary, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .base import Base
@@ -18,5 +18,5 @@ class Embedding(Base):
     file = relationship("File", backref="embeddings")
 
     __table_args__ = (
-        {'unique_together': ("file_id", "chunk_index")},
+        UniqueConstraint("file_id", "chunk_index", name="uq_file_chunk"),
     ) 

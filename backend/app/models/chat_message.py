@@ -16,6 +16,6 @@ class ChatMessage(Base):
     tokens_used = Column(Integer)
     response_time = Column(Float)
     created_at = Column(DateTime, default=func.now(), index=True)
-    metadata = Column(JSON)
+    message_metadata = Column(JSON)
 
     session = relationship("ChatSession", backref="messages") 

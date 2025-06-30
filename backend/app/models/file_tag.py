@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, ForeignKey, Float
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, ForeignKey, Float, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .base import Base
@@ -17,5 +17,5 @@ class FileTag(Base):
     tag = relationship("Tag", backref="file_tags")
 
     __table_args__ = (
-        {'unique_together': ("file_id", "tag_id")},
+        UniqueConstraint("file_id", "tag_id", name="uq_file_tag"),
     ) 
