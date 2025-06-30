@@ -1,0 +1,363 @@
+---
+description: 前端开发参考
+globs: 
+alwaysApply: false
+---
+# 前端开发指导
+
+## 技术栈
+
+### 核心技术
+- **框架**：React 18 + TypeScript
+- **UI库**：Ant Design 5.x
+- **编辑器**：Monaco Editor (VS Code内核)
+- **图表可视化**：D3.js / ECharts
+- **状态管理**：Zustand
+- **构建工具**：Vite
+- **路由**：React Router v6
+
+### 开发工具
+- **代码规范**：ESLint + Prettier
+- **类型检查**：TypeScript strict mode
+- **测试**：Jest + React Testing Library
+- **端到端测试**：Cypress / Playwright
+
+## 项目结构
+
+```
+frontend/
+├── src/
+│   ├── components/          # 通用组件
+│   │   ├── Editor/         # Markdown编辑器
+│   │   ├── FileTree/       # 文件树组件
+│   │   ├── Search/         # 搜索组件
+│   │   ├── Chat/           # AI问答组件
+│   │   └── Graph/          # 链接图谱组件
+│   ├── pages/              # 页面组件
+│   │   ├── Home/           # 主页
+│   │   ├── Editor/         # 编辑页面
+│   │   └── Settings/       # 设置页面
+│   ├── hooks/              # 自定义Hooks
+│   ├── services/           # API服务
+│   ├── stores/             # Zustand状态管理
+│   ├── types/              # TypeScript类型定义
+│   ├── utils/              # 工具函数
+│   └── styles/             # 样式文件
+├── public/                 # 静态资源
+├── tests/                  # 测试文件
+└── package.json
+```
+
+## 核心组件设计
+
+### 1. Markdown编辑器组件
+
+#### 功能要求
+- 基于Monaco Editor实现
+- 支持实时预览
+- 语法高亮和自动补全
+- 双向链接语法支持 `[[笔记标题]]`
+- 自动保存功能
+
+#### 组件接口
+```typescript
+interface EditorProps {
+  value: string;
+  onChange: (value: string) => void;
+  filePath: string;
+  onSave?: (content: string) => void;
+  readOnly?: boolean;
+  theme?: 'light' | 'dark';
+}
+```
+
+### 2. 文件树组件
+
+#### 功能要求
+- 显示文件夹层级结构
+- 支持文件/文件夹的增删改
+- 拖拽排序功能
+- 搜索过滤功能
+- 右键菜单操作
+
+#### 组件接口
+```typescript
+interface FileTreeProps {
+  files: FileNode[];
+  selectedFile?: string;
+  onFileSelect: (filePath: string) => void;
+  onFileCreate: (parentPath: string, name: string) => void;
+  onFileDelete: (filePath: string) => void;
+  onFileRename: (oldPath: string, newPath: string) => void;
+}
+
+interface FileNode {
+  path: string;
+  name: string;
+  type: 'file' | 'folder';
+  children?: FileNode[];
+  size?: number;
+  modifiedAt?: Date;
+}
+```
+
+### 3. 搜索组件
+
+#### 功能要求
+- 支持关键词搜索和语义搜索
+- 实时搜索建议
+- 搜索结果高亮
+- 搜索历史记录
+- 高级搜索选项
+
+#### 组件接口
+```typescript
+interface SearchProps {
+  onSearch: (query: string, type: SearchType) => void;
+  results: SearchResult[];
+  loading: boolean;
+  placeholder?: string;
+}
+
+type SearchType = 'keyword' | 'semantic' | 'mixed';
+
+interface SearchResult {
+  fileId: string;
+  filePath: string;
+  title: string;
+  snippet: string;
+  score: number;
+  highlights: string[];
+}
+```
+
+### 4. AI问答组件
+
+#### 功能要求
+- 对话界面设计
+- 流式消息显示
+- 消息历史记录
+- 来源文档引用
+- 复制和分享功能
+
+#### 组件接口
+```typescript
+interface ChatProps {
+  sessionId: string;
+  messages: ChatMessage[];
+  onSendMessage: (message: string) => void;
+  loading: boolean;
+}
+
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  sources?: DocumentSource[];
+}
+
+interface DocumentSource {
+  fileId: string;
+  filePath: string;
+  snippet: string;
+  score: number;
+}
+```
+
+### 5. 链接图谱组件
+
+#### 功能要求
+- 基于D3.js的网络图可视化
+- 节点和边的交互
+- 缩放和平移功能
+- 节点筛选和搜索
+- 布局算法选择
+
+#### 组件接口
+```typescript
+interface GraphProps {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  onNodeClick: (nodeId: string) => void;
+  onNodeHover?: (nodeId: string | null) => void;
+  layout?: 'force' | 'circular' | 'hierarchical';
+}
+
+interface GraphNode {
+  id: string;
+  label: string;
+  size: number;
+  color: string;
+  group?: string;
+}
+
+interface GraphLink {
+  source: string;
+  target: string;
+  weight: number;
+  type: string;
+}
+```
+
+## 状态管理
+
+### Zustand Store设计
+
+#### 1. 文件状态管理
+```typescript
+interface FileStore {
+  files: FileNode[];
+  currentFile: string | null;
+  fileContent: Record<string, string>;
+  
+  // Actions
+  loadFiles: () => Promise<void>;
+  selectFile: (filePath: string) => void;
+  saveFile: (filePath: string, content: string) => Promise<void>;
+  createFile: (parentPath: string, name: string) => Promise<void>;
+  deleteFile: (filePath: string) => Promise<void>;
+}
+```
+
+#### 2. 搜索状态管理
+```typescript
+interface SearchStore {
+  query: string;
+  results: SearchResult[];
+  loading: boolean;
+  history: string[];
+  
+  // Actions
+  search: (query: string, type: SearchType) => Promise<void>;
+  clearResults: () => void;
+  addToHistory: (query: string) => void;
+}
+```
+
+#### 3. AI问答状态管理
+```typescript
+interface ChatStore {
+  sessions: ChatSession[];
+  currentSession: string | null;
+  messages: Record<string, ChatMessage[]>;
+  
+  // Actions
+  createSession: () => string;
+  sendMessage: (sessionId: string, message: string) => Promise<void>;
+  loadHistory: (sessionId: string) => Promise<void>;
+}
+```
+
+## API服务
+
+### HTTP客户端配置
+```typescript
+// services/api.ts
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000',
+  timeout: 30000,
+});
+
+// 请求拦截器
+api.interceptors.request.use((config) => {
+  // 添加认证头、请求ID等
+  return config;
+});
+
+// 响应拦截器
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // 统一错误处理
+    console.error('API Error:', error);
+    return Promise.reject(error);
+  }
+);
+```
+
+### API服务模块
+```typescript
+// services/fileService.ts
+export const fileService = {
+  getFiles: () => api.get<FileNode[]>('/files'),
+  getFile: (path: string) => api.get<FileContent>(`/files/${encodeURIComponent(path)}`),
+  saveFile: (path: string, content: string) => api.put(`/files/${encodeURIComponent(path)}`, { content }),
+  deleteFile: (path: string) => api.delete(`/files/${encodeURIComponent(path)}`),
+  createFile: (parentPath: string, name: string) => api.post('/files', { parentPath, name }),
+};
+
+// services/searchService.ts
+export const searchService = {
+  search: (query: string, type: SearchType) => 
+    api.get<SearchResult[]>('/search', { params: { q: query, type } }),
+  getHistory: () => api.get<string[]>('/search/history'),
+};
+
+// services/chatService.ts
+export const chatService = {
+  createSession: () => api.post<{ sessionId: string }>('/chat/sessions'),
+  sendMessage: (sessionId: string, message: string) => 
+    api.post(`/chat/sessions/${sessionId}/messages`, { message }),
+  getMessages: (sessionId: string) => 
+    api.get<ChatMessage[]>(`/chat/sessions/${sessionId}/messages`),
+};
+```
+
+## 样式规范
+
+### 主题设计
+- **主色调**：蓝色系 (#1890ff)
+- **辅助色**：灰色系 (#f0f0f0)
+- **成功色**：绿色 (#52c41a)
+- **警告色**：橙色 (#faad14)
+- **错误色**：红色 (#ff4d4f)
+
+### 响应式设计
+- **断点**：576px, 768px, 992px, 1200px, 1600px
+- **栅格系统**：基于Ant Design的24栅格
+- **移动端适配**：优先考虑移动端体验
+
+### 组件样式
+- 使用CSS Modules或styled-components
+- 遵循BEM命名规范
+- 支持暗色主题切换
+
+## 性能优化
+
+### 代码分割
+- 路由级别的懒加载
+- 组件级别的动态导入
+- 第三方库的按需加载
+
+### 缓存策略
+- HTTP缓存头设置
+- Service Worker缓存
+- 内存缓存优化
+
+### 虚拟化
+- 大列表虚拟滚动
+- 文件树虚拟化
+- 搜索结果分页
+
+## 测试策略
+
+### 单元测试
+- 工具函数测试
+- 自定义Hooks测试
+- 组件逻辑测试
+
+### 集成测试
+- API服务测试
+- 状态管理测试
+- 组件交互测试
+
+### 端到端测试
+- 用户流程测试
+- 跨浏览器兼容性测试
+- 性能测试
+
+参考 [README.md](mdc:README.md) 了解前端与后端的接口设计和数据流转。
+

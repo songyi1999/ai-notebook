@@ -1,3 +1,4 @@
+import NoteEditor from './components/NoteEditor';
 function App() {
   return (
     <div className="App">
@@ -6,10 +7,10 @@ function App() {
         <p>纯本地、AI增强的个人知识管理系统</p>
       </header>
       <main>
-        <p>项目基础架构已搭建完成，准备开始功能开发...</p>
+        <NoteEditor />
       </main>
     </div>
   )
 }
 
-export default App 
+export default App

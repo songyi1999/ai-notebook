@@ -1,0 +1,188 @@
+---
+description: AI集成指导，涉及到ai 集成和使用时参考
+globs: 
+alwaysApply: false
+---
+# AI集成指导
+
+## AI架构概述
+
+本项目采用纯本地AI方案，通过Ollama统一管理LLM和嵌入模型，使用OpenAI兼容接口实现标准化调用。
+
+## Ollama集成方案
+
+### 统一模型管理
+- **LLM模型**：通过Ollama管理（如llama3.2, qwen2.5等）
+- **嵌入模型**：通过Ollama管理（如bge-m3, nomic-embed-text等）
+- **接口标准**：使用OpenAI兼容接口调用所有模型
+
+### 环境变量配置
+```bash
+# Ollama服务配置
+OLLAMA_API_URL=http://localhost:11434
+OLLAMA_API_KEY=ollama  # 可选，本地通常不需要
+
+# LLM模型配置
+LLM_MODEL_NAME=llama3.2:latest
+LLM_TEMPERATURE=0.7
+LLM_MAX_TOKENS=2048
+
+# 嵌入模型配置
+EMBEDDING_MODEL_NAME=bge-m3:latest
+EMBEDDING_DIMENSION=1024
+```
+
+## RAG问答系统
+
+### 系统架构
+参考 [README.md](mdc:README.md) 中的"AI问答系统(RAG)流程图"了解详细时序。
+
+### 核心组件
+
+#### 1. 文档预处理
+- **文本分块**：将长文档分割为1000-2000字符的块
+- **重叠处理**：块之间保持200-300字符重叠
+- **元数据保存**：记录块的来源文件、位置等信息
+
+#### 2. 向量化处理
+- **嵌入生成**：调用Ollama嵌入模型API生成向量
+- **向量存储**：存储到ChromaDB向量数据库
+- **索引建立**：建立高效的向量索引
+
+#### 3. 检索系统
+- **混合搜索**：结合FTS5关键词搜索和ChromaDB语义搜索
+- **相关性排序**：基于相似度和关键词匹配度排序
+- **上下文构建**：选择最相关的文档片段作为上下文
+
+#### 4. 生成系统
+- **提示工程**：构建包含上下文的提示模板
+- **LLM调用**：通过OpenAI兼容接口调用Ollama LLM
+- **答案生成**：生成基于上下文的准确答案
+- **来源引用**：提供答案来源的文档引用
+
+## 实现细节
+
+### OpenAI兼容接口调用
+
+#### LLM调用示例
+```python
+import openai
+
+# 配置Ollama客户端
+client = openai.OpenAI(
+    base_url="http://localhost:11434/v1",
+    api_key="ollama"  # 本地可以是任意值
+)
+
+# 调用LLM
+response = client.chat.completions.create(
+    model="llama3.2:latest",
+    messages=[
+        {"role": "system", "content": "你是一个智能助手"},
+        {"role": "user", "content": "用户问题"}
+    ],
+    temperature=0.7,
+    max_tokens=2048
+)
+```
+
+#### 嵌入模型调用示例
+```python
+# 生成嵌入向量
+embedding_response = client.embeddings.create(
+    model="bge-m3:latest",
+    input="要嵌入的文本内容"
+)
+
+embedding_vector = embedding_response.data[0].embedding
+```
+
+### ChromaDB集成
+
+#### 集合管理
+```python
+import chromadb
+
+# 初始化ChromaDB客户端
+client = chromadb.PersistentClient(path="./chroma_db")
+
+# 创建或获取集合
+collection = client.get_or_create_collection(
+    name="notebook_embeddings",
+    metadata={"description": "AI笔记本文档嵌入"}
+)
+```
+
+#### 向量存储和检索
+```python
+# 添加文档向量
+collection.add(
+    embeddings=[embedding_vector],
+    documents=[chunk_text],
+    metadatas=[{"file_id": file_id, "chunk_index": chunk_index}],
+    ids=[f"{file_id}_{chunk_index}"]
+)
+
+# 语义搜索
+results = collection.query(
+    query_embeddings=[query_embedding],
+    n_results=5,
+    include=["documents", "metadatas", "distances"]
+)
+```
+
+## 性能优化
+
+### 缓存策略
+- **嵌入缓存**：缓存文档嵌入向量，避免重复计算
+- **搜索缓存**：缓存常见查询的搜索结果
+- **模型缓存**：保持模型在内存中，减少加载时间
+
+### 异步处理
+- **后台索引**：文档更新后异步重建索引
+- **批量处理**：批量生成嵌入向量提高效率
+- **流式响应**：支持流式返回LLM生成的答案
+
+### 内存管理
+- **向量压缩**：使用适当的向量维度平衡精度和性能
+- **分块策略**：合理的文档分块大小平衡上下文和检索精度
+- **清理机制**：定期清理过期的缓存和临时数据
+
+## 错误处理
+
+### 模型服务异常
+- **连接重试**：Ollama服务不可用时的重试机制
+- **降级方案**：模型调用失败时的备用方案
+- **错误日志**：详细记录AI服务调用的错误信息
+
+### 数据一致性
+- **事务处理**：确保向量和元数据的一致性
+- **恢复机制**：服务异常后的数据恢复
+- **版本管理**：模型版本变更时的数据迁移
+
+## 监控和调试
+
+### 性能监控
+- **响应时间**：监控AI服务的响应时间
+- **成功率**：统计AI调用的成功率
+- **资源使用**：监控内存和GPU使用情况
+
+### 调试工具
+- **日志系统**：详细的AI调用日志
+- **调试接口**：提供AI服务状态查询接口
+- **测试工具**：RAG系统的端到端测试工具
+
+## 扩展性设计
+
+### 模型切换
+- **配置化**：通过环境变量轻松切换模型
+- **A/B测试**：支持同时运行多个模型进行对比
+- **热更新**：支持不重启服务切换模型
+
+### 多模态支持
+- **图像理解**：预留图像模型集成接口
+- **语音处理**：预留语音模型集成接口
+- **多语言**：支持多语言嵌入和生成模型
+
+参考 [DATABASE.md](mdc:DATABASE.md) 了解AI相关数据表的详细设计。
+

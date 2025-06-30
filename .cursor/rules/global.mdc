@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+请始终 参考和维护 [README.md](mdc:README.md) [DATABASE.md](mdc:DATABASE.md) [开发计划.md](mdc:开发计划.md) [task.log](mdc:task.log)
