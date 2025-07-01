@@ -5,34 +5,25 @@ import {
   Modal, 
   Input, 
   message, 
-  Dropdown, 
   Space,
   Typography,
-  Spin
+  Spin,
+  Tooltip,
+  Dropdown
 } from 'antd';
 import { 
   FolderOutlined, 
   FileOutlined, 
-  PlusOutlined,
   FolderAddOutlined,
   FileAddOutlined,
-  MoreOutlined,
   EditOutlined,
   DeleteOutlined
 } from '@ant-design/icons';
-import type { DataNode } from 'antd/es/tree';
+import type { DataNode, TreeProps } from 'antd/es/tree';
+import type { MenuProps } from 'antd';
 import { apiClient, FileTreeNode } from '../services/api';
 
 const { Text } = Typography;
-
-interface FileNode {
-  key: string;
-  title: string;
-  isLeaf: boolean;
-  children?: FileNode[];
-  path: string;
-  type: 'file' | 'folder';
-}
 
 interface FileTreeProps {
   onFileSelect: (filePath: string, fileName: string) => void;
@@ -46,20 +37,34 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>(['notes']);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   
+  // 新增：当前选中的文件夹路径，用于新建文件
+  const [selectedFolderPath, setSelectedFolderPath] = useState<string>('notes');
+  
   // 模态框状态
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [createType, setCreateType] = useState<'file' | 'folder'>('file');
   const [createName, setCreateName] = useState('');
   const [createParentPath, setCreateParentPath] = useState('');
 
+  // 添加重命名状态
+  const [isRenameModalVisible, setIsRenameModalVisible] = useState(false);
+  const [renameNodeKey, setRenameNodeKey] = useState('');
+  const [newName, setNewName] = useState('');
+
+  // 当父组件传入的 selectedFile 改变时同步状态
+  useEffect(() => {
+    if (selectedFile) {
+      setSelectedKeys([selectedFile]);
+    }
+  }, [selectedFile]);
+
   // 将FileTreeNode转换为Ant Design Tree的DataNode格式
   const convertToTreeData = (nodes: FileTreeNode[]): DataNode[] => {
     return nodes.map(node => ({
       title: node.name,
       key: node.path,
-      icon: node.type === 'directory' ? <FolderOutlined /> : <FileOutlined />,
       isLeaf: node.type === 'file',
-      children: node.children ? convertToTreeData(node.children) : undefined
+      children: node.children ? convertToTreeData(node.children) : undefined,
     }));
   };
 
@@ -69,9 +74,7 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
     try {
       // 调用后端API获取文件树
       const fileTreeNodes = await apiClient.getFileTree('notes');
-      const treeData = convertToTreeData(fileTreeNodes);
-      
-      setTreeData(treeData);
+      setTreeData(convertToTreeData(fileTreeNodes));
       console.log('文件树加载完成:', treeData);
     } catch (error) {
       console.error('加载文件树失败:', error);
@@ -106,18 +109,17 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
   }, []);
 
   // 处理文件选择
-  const handleSelect = (selectedKeys: React.Key[], info: any) => {
-    if (selectedKeys.length > 0) {
-      const key = selectedKeys[0] as string;
-      const node = info.node;
-      
-      // 只有文件才能被选中编辑
-      if (node.isLeaf && key.endsWith('.md')) {
-        setSelectedKeys(selectedKeys);
-        const fileName = node.title;
-        onFileSelect(key, fileName);
-        console.log('选中文件:', { path: key, name: fileName });
-      }
+  const handleSelect = (keys: React.Key[], info: any) => {
+    setSelectedKeys(keys);
+    
+    if (info.node.isLeaf) {
+      // 如果是文件，选中文件并设置其父目录为当前选中文件夹
+      onFileSelect(info.node.key, info.node.title);
+      const parentPath = info.node.key.toString().substring(0, info.node.key.toString().lastIndexOf('/'));
+      setSelectedFolderPath(parentPath || 'notes');
+    } else {
+      // 如果是文件夹，设置为当前选中文件夹
+      setSelectedFolderPath(info.node.key.toString());
     }
   };
 
@@ -128,14 +130,10 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
       return;
     }
 
-    const fullPath = createParentPath 
-      ? `${createParentPath}/${createName}` 
-      : `notes/${createName}`;
-    
-    // 如果是文件且没有.md后缀，自动添加
-    const finalPath = createType === 'file' && !createName.endsWith('.md') 
-      ? `${fullPath}.md` 
-      : fullPath;
+    // 使用指定的父路径，或者当前选中的文件夹路径
+    const parent = createParentPath || selectedFolderPath;
+    const finalName = createType === 'file' && !createName.endsWith('.md') ? `${createName}.md` : createName;
+    const finalPath = `${parent}/${finalName}`;
 
     try {
       if (createType === 'folder') {
@@ -144,23 +142,28 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
         message.success('目录创建成功');
       } else {
         // 创建文件
-        const fileName = createName.endsWith('.md') ? createName : `${createName}.md`;
         await apiClient.createFile({
           file_path: finalPath,
           title: createName,
           content: `# ${createName}\n\n请在这里编写你的笔记内容...`,
-          parent_folder: createParentPath || 'notes'
+          parent_folder: parent
         });
         message.success('文件创建成功');
         
         // 如果创建的是文件，自动选中
-        onFileSelect(finalPath, fileName);
+        onFileSelect(finalPath, finalName);
+        setSelectedKeys([finalPath]);
       }
       
-      console.log('创建成功:', { type: createType, path: finalPath });
+      console.log('创建成功:', { type: createType, path: finalPath, parent });
       
       // 重新加载文件树
       await loadFileTree();
+      
+      // 展开父目录以显示新创建的项目
+      if (!expandedKeys.includes(parent)) {
+        setExpandedKeys(prev => [...prev, parent]);
+      }
       
     } catch (error) {
       console.error('创建失败:', error);
@@ -181,152 +184,240 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
     setIsCreateModalVisible(true);
   };
 
-  // 右键菜单
-  const getContextMenu = (node: any) => {
-    const isFolder = !node.isLeaf;
-    const menuItems: any[] = [
+  const onDrop: TreeProps['onDrop'] = async (info) => {
+    const dragKey = info.dragNode.key.toString();
+    
+    // Determine the target directory
+    let targetDir: string;
+    if (info.node.isLeaf) {
+      // If dropped on a file, target its parent directory
+      targetDir = info.node.key.toString().substring(0, info.node.key.toString().lastIndexOf('/'));
+    } else {
+      // If dropped on a directory, that's the target
+      targetDir = info.node.key.toString();
+    }
+    
+    const dragNodeName = dragKey.substring(dragKey.lastIndexOf('/') + 1);
+    const newPath = `${targetDir}/${dragNodeName}`;
+    
+    if(newPath === dragKey) return; // No change in path
+
+    try {
+        await apiClient.moveFile(dragKey, newPath);
+        message.success(`Moved to ${targetDir}`);
+        await loadFileTree();
+        // Expand the target directory to show the moved item
+        if (!expandedKeys.includes(targetDir)) {
+          setExpandedKeys(prev => [...prev, targetDir]);
+        }
+    } catch (error) {
+        console.error("Failed to move file/directory: ", error);
+        message.error(`Move failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
+  // 处理重命名
+  const handleRename = async () => {
+    if (!newName.trim()) {
+      message.warning('请输入新名称');
+      return;
+    }
+
+    try {
+      const oldPath = renameNodeKey;
+      const parentPath = oldPath.substring(0, oldPath.lastIndexOf('/'));
+      const newPath = `${parentPath}/${newName}`;
+
+      await apiClient.moveFile(oldPath, newPath);
+      message.success('重命名成功');
+      await loadFileTree();
+      
+      // 如果重命名的是当前选中的文件，更新选中状态
+      if (selectedKeys.includes(oldPath)) {
+        setSelectedKeys([newPath]);
+        onFileSelect(newPath, newName);
+      }
+    } catch (error) {
+      console.error('重命名失败:', error);
+      message.error(`重命名失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+
+    setIsRenameModalVisible(false);
+    setNewName('');
+    setRenameNodeKey('');
+  };
+
+  // 处理删除
+  const handleDelete = async (nodePath: string) => {
+    try {
+      // 先获取文件信息
+      const fileInfo = await apiClient.getFileByPath(nodePath);
+      if (!fileInfo || !fileInfo.id) {
+        throw new Error('无法获取文件信息');
+      }
+      
+      // 删除文件
+      await apiClient.deleteFile(fileInfo.id);
+      message.success('删除成功');
+      await loadFileTree();
+      
+      // 如果删除的是当前选中的文件，清除选中状态
+      if (selectedKeys.includes(nodePath)) {
+        setSelectedKeys([]);
+      }
+    } catch (error) {
+      console.error('删除失败:', error);
+      message.error(`删除失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+  };
+
+  // 右键菜单项
+  const getContextMenuItems = (node: DataNode): MenuProps['items'] => {
+    const nodePath = node.key.toString();
+    
+    const items: MenuProps['items'] = [
       {
         key: 'newFile',
-        label: (
-          <span>
-            <FileAddOutlined /> 新建文件
-          </span>
-        ),
-        onClick: () => showCreateModal('file', node.key)
+        label: '新建文件',
+        icon: <FileAddOutlined />,
+        onClick: () => showCreateModal('file', nodePath)
       },
       {
         key: 'newFolder',
-        label: (
-          <span>
-            <FolderAddOutlined /> 新建目录
-          </span>
-        ),
-        onClick: () => showCreateModal('folder', node.key)
+        label: '新建文件夹',
+        icon: <FolderAddOutlined />,
+        onClick: () => showCreateModal('folder', nodePath)
       }
     ];
 
-    if (!isFolder) {
-      menuItems.push(
-        { key: 'divider', type: 'divider' as const },
+    // 非根目录才显示重命名和删除选项
+    if (nodePath !== 'notes') {
+      items.push(
+        {
+          type: 'divider'
+        },
         {
           key: 'rename',
-          label: (
-            <span>
-              <EditOutlined /> 重命名
-            </span>
-          ),
-          onClick: () => message.info('重命名功能开发中...')
+          label: '重命名',
+          icon: <EditOutlined />,
+          onClick: () => {
+            setRenameNodeKey(nodePath);
+            setNewName(nodePath.split('/').pop() || '');
+            setIsRenameModalVisible(true);
+          }
         },
         {
           key: 'delete',
-          label: (
-            <span style={{ color: '#ff4d4f' }}>
-              <DeleteOutlined /> 删除
-            </span>
-          ),
-          onClick: () => message.info('删除功能开发中...')
+          label: '删除',
+          icon: <DeleteOutlined />,
+          danger: true,
+          onClick: () => handleDelete(nodePath)
         }
       );
     }
 
-    return menuItems;
+    return items;
   };
 
-  // 自定义标题渲染
-  const renderTitle = (node: any) => {
+  // 自定义标题渲染，添加选中状态样式
+  const renderTitle = (node: DataNode) => {
+    const isSelected = selectedKeys.includes(node.key);
+    const isSelectedFolder = !node.isLeaf && selectedFolderPath === node.key.toString();
+    
     return (
       <Dropdown
-        menu={{ items: getContextMenu(node) }}
+        menu={{ items: getContextMenuItems(node) }}
         trigger={['contextMenu']}
       >
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          width: '100%'
-        }}>
-          <Text ellipsis style={{ flex: 1 }}>
-            {node.title}
-          </Text>
-        </div>
+        <Tooltip title={node.title?.toString()}>
+          <Space style={{
+            padding: '2px 4px',
+            borderRadius: '4px',
+            backgroundColor: isSelected || isSelectedFolder ? '#e6f7ff' : 'transparent',
+            border: isSelected || isSelectedFolder ? '1px solid #91d5ff' : '1px solid transparent'
+          }}>
+            {!node.isLeaf ? <FolderOutlined /> : <FileOutlined />}
+            <Text ellipsis style={{ maxWidth: '150px' }}>
+              {node.title?.toString()}
+            </Text>
+          </Space>
+        </Tooltip>
       </Dropdown>
     );
   };
 
   return (
-    <div style={{ height: '100%', padding: '16px' }}>
-      {/* 头部工具栏 */}
-      <div style={{ 
-        marginBottom: '16px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center'
-      }}>
-        <Text strong>文件管理</Text>
-        <Space>
-          <Button
-            type="text"
-            size="small"
-            icon={<FileAddOutlined />}
-            onClick={() => showCreateModal('file', 'notes')}
-            title="新建文件"
-          />
-          <Button
-            type="text"
-            size="small"
-            icon={<FolderAddOutlined />}
-            onClick={() => showCreateModal('folder', 'notes')}
-            title="新建目录"
-          />
-        </Space>
-      </div>
-
-      {/* 文件树 */}
+    <div className="file-tree-container">
       <Spin spinning={loading}>
+        <div style={{ marginBottom: 16 }}>
+          <Space>
+            <Button
+              icon={<FileAddOutlined />}
+              onClick={() => showCreateModal('file')}
+            >
+              新建文件
+            </Button>
+            <Button
+              icon={<FolderAddOutlined />}
+              onClick={() => showCreateModal('folder')}
+            >
+              新建文件夹
+            </Button>
+          </Space>
+          {/* 显示当前选中的文件夹 */}
+          <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
+            当前目录: {selectedFolderPath}
+          </div>
+        </div>
+
         <Tree
           treeData={treeData}
           onSelect={handleSelect}
-          onExpand={setExpandedKeys}
-          expandedKeys={expandedKeys}
           selectedKeys={selectedKeys}
-          showIcon
+          expandedKeys={expandedKeys}
+          onExpand={keys => setExpandedKeys(keys)}
           titleRender={renderTitle}
-          style={{ 
-            backgroundColor: 'transparent',
-            fontSize: '14px'
-          }}
+          draggable
+          onDrop={onDrop}
         />
-      </Spin>
 
-      {/* 创建文件/目录模态框 */}
-      <Modal
-        title={`新建${createType === 'file' ? '文件' : '目录'}`}
-        open={isCreateModalVisible}
-        onOk={handleCreate}
-        onCancel={() => setIsCreateModalVisible(false)}
-        okText="创建"
-        cancelText="取消"
-      >
-        <div style={{ marginBottom: '16px' }}>
-          <Text type="secondary">
-            父目录: {createParentPath || 'notes'}
-          </Text>
-        </div>
-        <Input
-          placeholder={`请输入${createType === 'file' ? '文件' : '目录'}名称`}
-          value={createName}
-          onChange={(e) => setCreateName(e.target.value)}
-          onPressEnter={handleCreate}
-          suffix={createType === 'file' && !createName.endsWith('.md') ? '.md' : ''}
-        />
-        {createType === 'file' && (
-          <div style={{ marginTop: '8px' }}>
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              文件将自动添加 .md 后缀
-            </Text>
+        {/* 创建文件/文件夹模态框 */}
+        <Modal
+          title={`新建${createType === 'file' ? '文件' : '文件夹'}`}
+          open={isCreateModalVisible}
+          onOk={handleCreate}
+          onCancel={() => setIsCreateModalVisible(false)}
+        >
+          <div style={{ marginBottom: 16, fontSize: '14px', color: '#666' }}>
+            将在目录 <strong>{createParentPath || selectedFolderPath}</strong> 下创建
           </div>
-        )}
-      </Modal>
+          <Input
+            placeholder={`请输入${createType === 'file' ? '文件' : '文件夹'}名称`}
+            value={createName}
+            onChange={e => setCreateName(e.target.value)}
+            onPressEnter={handleCreate}
+          />
+        </Modal>
+
+        {/* 重命名模态框 */}
+        <Modal
+          title="重命名"
+          open={isRenameModalVisible}
+          onOk={handleRename}
+          onCancel={() => {
+            setIsRenameModalVisible(false);
+            setNewName('');
+            setRenameNodeKey('');
+          }}
+        >
+          <Input
+            placeholder="请输入新名称"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onPressEnter={handleRename}
+          />
+        </Modal>
+      </Spin>
     </div>
   );
 };

@@ -13,6 +13,27 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 - 🕸️ **链接可视化**：双向链接网络图谱和关系展示
 - 🔗 **双向链接**：支持笔记间的双向链接和关系可视化
 - 🔍 **混合搜索**：结合关键词搜索和语义搜索
+- 📁 **智能文件管理**：文件树状视图，支持拖拽移动、右键菜单操作
+- ✨ **自动保存**：实时自动保存编辑内容，支持Ctrl+S快捷键
+
+### 最新功能更新
+
+#### 文件树选中状态功能
+- **文件夹选中状态**：点击文件夹时会显示选中状态，便于识别当前工作目录
+- **当前目录显示**：在文件树顶部显示当前选中的目录路径
+- **智能新建**：新建文件/文件夹时会在当前选中的目录下创建
+- **视觉反馈**：选中的文件/文件夹有明显的蓝色背景标识
+- **目录指示**：创建对话框中会明确显示将在哪个目录下创建新项目
+
+#### 编辑器增强功能
+- **自动保存**：每1秒自动保存编辑内容
+- **Ctrl+S快捷键**：支持传统的保存快捷键
+- **保存状态指示**：实时显示保存状态（已保存/保存中/未保存）
+
+#### 文件操作优化
+- **拖拽移动**：支持文件和文件夹的拖拽移动
+- **右键菜单**：提供新建、重命名、删除等快捷操作
+- **自动展开**：操作完成后自动展开相关目录
 
 ### 技术架构
 
@@ -28,39 +49,39 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 ```mermaid
 graph TB
     subgraph "用户界面层"
-        UI[React前端界面]
-        Editor[Markdown编辑器]
-        Search[搜索界面]
-        Chat[AI问答界面]
-        Graph[链接关系图谱界面]
+        UI["React前端界面"]
+        Editor["Markdown编辑器"]
+        Search["搜索界面"]
+        Chat["AI问答界面"]
+        GraphView["链接关系图谱界面"]
     end
 
     subgraph "API服务层"
-        API[FastAPI后端服务]
-        FileAPI[文件管理API]
-        SearchAPI[搜索API]
-        AIAPI[AI问答API]
-        GraphAPI[链接图谱API]
+        API["FastAPI后端服务"]
+        FileAPI["文件管理API"]
+        SearchAPI["搜索API"]
+        AIAPI["AI问答API"]
+        GraphAPI["链接图谱API"]
     end
 
     subgraph "业务逻辑层"
-        FileService[文件服务]
-        SearchService[搜索服务]
-        AIService[AI服务]
-        EmbeddingService[嵌入服务]
-        LinkService[链接服务]
-        TagService[标签服务]
+        FileService["文件服务"]
+        SearchService["搜索服务"]
+        AIService["AI服务"]
+        EmbeddingService["嵌入服务"]
+        LinkService["链接服务"]
+        TagService["标签服务"]
     end
 
     subgraph "数据存储层"
-        SQLite[(SQLite数据库)]
-        ChromaDB[(ChromaDB向量库)]
-        FileSystem[本地文件系统]
+        SQLiteDB["SQLite数据库"]
+        ChromaDB["Chroma向量库"]
+        FileSystemStore["本地文件系统"]
     end
 
     subgraph "AI模型层"
-        LocalLLM[本地LLM服务 (OpenAI兼容)]
-        Embedding[嵌入模型]
+        LocalLLM["本地LLM服务 (OpenAI兼容)"]
+        EmbeddingModel["嵌入模型"]
     end
 
     %% 用户界面到API的连接
@@ -68,7 +89,7 @@ graph TB
     Editor --> FileAPI
     Search --> SearchAPI
     Chat --> AIAPI
-    Graph --> GraphAPI
+    GraphView --> GraphAPI
 
     %% API到业务逻辑的连接
     FileAPI --> FileService
@@ -77,18 +98,18 @@ graph TB
     GraphAPI --> LinkService
 
     %% 业务逻辑到数据存储的连接
-    FileService --> SQLite
-    FileService --> FileSystem
-    SearchService --> SQLite
+    FileService --> SQLiteDB
+    FileService --> FileSystemStore
+    SearchService --> SQLiteDB
     SearchService --> ChromaDB
     AIService --> ChromaDB
     EmbeddingService --> ChromaDB
-    LinkService --> SQLite
-    TagService --> SQLite
+    LinkService --> SQLiteDB
+    TagService --> SQLiteDB
 
     %% 业务逻辑到AI模型的连接
     AIService --> LocalLLM
-    EmbeddingService --> Embedding
+    EmbeddingService --> EmbeddingModel
 
     %% 数据流向
     FileService --> EmbeddingService
@@ -152,23 +173,23 @@ sequenceDiagram
     FE->>API: PUT /files/{path}<br/>发送新内容
 
     Note over API: 同步保存 (立即响应)
-    API->>FileSystem: 1. 更新 .md 文件
-    API->>SQLite: 2. 更新 files 表
-    Note right of SQLite: FTS5索引通过触发器自动更新
+    API->>FileSystemStore: 1. 更新 .md 文件
+    API->>SQLiteDB: 2. 更新 files 表
+    Note right of SQLiteDB: FTS5索引通过触发器自动更新
     API-->>FE: 返回 "保存成功"
     FE-->>User: 显示 "已保存"
 
     Note over API: 异步处理 (后台运行)
     API-->>BG: 3. 启动后台更新任务
 
-    BG->>SQLite: 4a. 删除旧的链接/标签/向量记录
+    BG->>SQLiteDB: 4a. 删除旧的链接/标签/向量记录
     BG->>ChromaDB: 4b. 删除旧的向量
 
     BG->>BG: 5. 重新分块/提取链接/提取标签
 
-    BG->>Embedding Service: 6. 重新生成向量
+    BG->>EmbeddingService: 6. 重新生成向量
 
-    BG->>SQLite: 7a. 写入新的链接/标签/向量记录
+    BG->>SQLiteDB: 7a. 写入新的链接/标签/向量记录
     BG->>ChromaDB: 7b. 写入新的向量
 
     Note over BG: 后台索引更新完成
@@ -198,7 +219,7 @@ graph LR
         FileTagTable[(file_tags表)]
         EmbedTable[(embeddings表)]
         VectorDB[(ChromaDB)]
-        FileSystem[(文件系统)]
+        FileSystemStore[(文件系统)]
     end
 
     subgraph "数据输出"
@@ -221,7 +242,7 @@ graph LR
 
     %% 数据存储
     Parser --> FileTable
-    Parser --> FileSystem
+    Parser --> FileSystemStore
     LinkExtractor --> LinkTable
     TagExtractor --> TagTable
     TagExtractor --> FileTagTable
@@ -248,7 +269,7 @@ sequenceDiagram
     participant Embed as 嵌入服务
     participant ChromaDB as ChromaDB
     participant LocalLLM as 本地LLM服务
-    participant DB as SQLite
+    participant DB as SQLiteDB
 
     User->>UI: 输入问题
     UI->>API: POST /api/v1/chat/ask
@@ -442,30 +463,51 @@ uvicorn main:app --reload
 
 ### 后端API
 
-#### 文件管理
-- `create_file()` - 创建文件
-  - 参数：`file_path: str, content: str`
+#### 文件管理 (backend/app/api/files.py)
+- `create_file_api()` - 创建文件
+  - 参数：`file: FileCreate`
   - 返回：`FileResponse`
-  - 文件：`backend/app/api/files.py`
-  - 功能：在指定路径创建新文件
+  - 功能：创建新文件（同时写入数据库和磁盘）
 
-- `read_file()` - 读取文件
-  - 参数：`file_path: str`
-  - 返回：`FileContent`
-  - 文件：`backend/app/api/files.py`
-  - 功能：读取指定文件内容
-
-- `update_file()` - 更新文件
-  - 参数：`file_path: str, content: str`
+- `read_file_api()` - 根据ID读取文件
+  - 参数：`file_id: int`
   - 返回：`FileResponse`
-  - 文件：`backend/app/api/files.py`
-  - 功能：更新文件内容
+  - 功能：根据文件ID读取文件信息
 
-- `delete_file()` - 删除文件
+- `read_file_by_path_api()` - 根据路径读取文件
   - 参数：`file_path: str`
-  - 返回：`DeleteResponse`
-  - 文件：`backend/app/api/files.py`
-  - 功能：删除指定文件
+  - 返回：`FileResponse`
+  - 功能：根据文件路径读取文件（支持从磁盘自动导入）
+
+- `read_files_api()` - 获取文件列表
+  - 参数：`skip: int, limit: int, include_deleted: bool`
+  - 返回：`List[FileResponse]`
+  - 功能：分页获取文件列表
+
+- `update_file_api()` - 更新文件
+  - 参数：`file_id: int, file: FileUpdate`
+  - 返回：`FileResponse`
+  - 功能：更新文件内容（同时更新数据库和磁盘）
+
+- `delete_file_api()` - 删除文件
+  - 参数：`file_id: int`
+  - 返回：`None`
+  - 功能：软删除文件
+
+- `get_file_tree_api()` - 获取文件树
+  - 参数：`root_path: str`
+  - 返回：`List[Dict]`
+  - 功能：获取目录树结构
+
+- `create_directory_api()` - 创建目录
+  - 参数：`request: dict`
+  - 返回：`Dict`
+  - 功能：创建新目录
+
+- `search_files_api()` - 搜索文件
+  - 参数：`q: str, search_type: str, limit: int`
+  - 返回：`List[FileResponse]`
+  - 功能：全文搜索文件内容
 
 #### 搜索功能
 - `search_files()` - 文件搜索
@@ -480,24 +522,41 @@ uvicorn main:app --reload
   - 文件：`backend/app/services/chromadb_service.py`
   - 功能：基于ChromaDB的向量相似度搜索
 
-#### AI功能
-- `generate_answer()` - 生成AI回答
-  - 参数：`question: str, context: List[str]`
-  - 返回：`AIResponse`
-  - 文件：`backend/app/services/ai_service.py`
-  - 功能：基于上下文生成AI回答
+#### AI功能 (backend/app/api/ai.py)
+- `generate_summary_api()` - 生成内容摘要
+  - 参数：`request: SummaryRequest`
+  - 返回：`Dict[str, str]`
+  - 功能：使用AI生成文档摘要
 
-- `generate_embeddings()` - 生成文本嵌入
-  - 参数：`texts: List[str]`
-  - 返回：`List[Vector]`
-  - 文件：`backend/app/services/embedding_service.py`
-  - 功能：调用OpenAI兼容接口将文本转换为向量表示
+- `suggest_tags_api()` - 智能标签建议
+  - 参数：`request: TagSuggestionRequest`
+  - 返回：`Dict[str, List[str]]`
+  - 功能：基于内容智能推荐标签
 
-- `extract_tags()` - 智能标签提取
-  - 参数：`text: str`
-  - 返回：`List[Tag]`
-  - 文件：`backend/app/services/tag_service.py`
-  - 功能：从文本中提取关键词作为标签
+- `create_embeddings_api()` - 创建向量嵌入
+  - 参数：`file_id: int`
+  - 返回：`Dict[str, Any]`
+  - 功能：为指定文件创建向量嵌入
+
+- `semantic_search_api()` - 语义搜索
+  - 参数：`request: SemanticSearchRequest`
+  - 返回：`Dict[str, List]`
+  - 功能：基于语义相似度搜索文档
+
+- `analyze_content_api()` - 内容分析
+  - 参数：`request: ContentAnalysisRequest`
+  - 返回：`Dict[str, Any]`
+  - 功能：分析文档内容特征
+
+- `generate_related_questions_api()` - 生成相关问题
+  - 参数：`request: RelatedQuestionsRequest`
+  - 返回：`Dict[str, List[str]]`
+  - 功能：基于内容生成相关思考问题
+
+- `get_ai_status_api()` - 获取AI服务状态
+  - 参数：无
+  - 返回：`Dict[str, Any]`
+  - 功能：检查AI服务可用性和配置状态
 
 #### 链接关系
 - `build_link_graph()` - 构建链接关系图
@@ -551,27 +610,22 @@ uvicorn main:app --reload
 - `APP_SECRET_KEY` - 应用密钥，用于加密
 
 #### 数据库配置
-- `DATABASE_URL` - 数据库连接URL，默认：`sqlite:///./data/notebook.db`
-- `DATABASE_POOL_SIZE` - 连接池大小，默认：`10`
+- `DATABASE_URL` - 数据库连接URL，默认：`sqlite:///./data/ai_notebook.db`
+- `DATA_DIRECTORY` - 数据存储根目录，默认：`./data`
+- `CHROMA_DB_PATH` - ChromaDB向量数据库路径，默认：`./data/chroma_db`
 
 #### AI模型配置
-- `LLM_API_URL` - 大语言模型(LLM)的OpenAI兼容API地址，默认：`http://llm-service:11434`
-- `LLM_API_KEY` - LLM API密钥，默认为空
-- `LLM_MODEL_NAME` - 在本地LLM服务中运行的模型名称，默认：`llama3`
-- `EMBEDDING_API_URL` - 嵌入模型的OpenAI兼容API地址，默认使用LLM_API_URL
-- `EMBEDDING_API_KEY` - 嵌入模型API密钥，默认为空
-- `EMBEDDING_MODEL_NAME` - 嵌入模型名称，默认：`mxbai-embed-large`
-- `MAX_CONTEXT_LENGTH` - 最大上下文长度，默认：`4096`
-
-#### 搜索引擎配置
-- `CHROMADB_PATH` - ChromaDB数据库路径，默认：`./data/chromadb`
-- `VECTOR_DIMENSION` - 向量维度，默认：`1024`
-- `COLLECTION_NAME` - 向量集合名称，默认：`notebook_embeddings`
+- `OPENAI_API_KEY` - OpenAI API密钥，用于AI功能
+- `OPENAI_BASE_URL` - OpenAI API基础URL，支持本地或第三方兼容服务
+- `OPENAI_MODEL` - 使用的模型名称，默认：`gpt-3.5-turbo`
 
 #### 文件存储配置
-- `DATA_PATH` - 数据存储路径，默认：`./data`
-- `UPLOAD_PATH` - 文件上传路径，默认：`./data/uploads`
-- `MAX_FILE_SIZE` - 最大文件大小，默认：`100MB`
+- `NOTES_DIRECTORY` - 笔记文件存储目录，默认：`../notes`（相对于backend目录）
+- `MAX_FILE_SIZE` - 最大文件大小，默认：`10MB`
+
+#### 搜索配置
+- `SEARCH_LIMIT` - 默认搜索结果数量，默认：`50`
+- `EMBEDDING_DIMENSION` - 向量维度，默认：`1536`（OpenAI text-embedding-ada-002）
 
 ### 全局常量
 

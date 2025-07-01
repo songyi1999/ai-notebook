@@ -107,6 +107,17 @@ export class ApiClient {
         });
     }
 
+    // 移动文件或目录
+    async moveFile(sourcePath: string, destinationPath: string): Promise<{ success: boolean; message: string }> {
+        return this.request<{ success: boolean; message: string }>('/files/move', {
+            method: 'POST',
+            body: JSON.stringify({
+                source_path: sourcePath,
+                destination_path: destinationPath
+            }),
+        });
+    }
+
     // 搜索文件
     async searchFiles(query: string, searchType: 'keyword' | 'semantic' | 'mixed' = 'mixed'): Promise<FileData[]> {
         const params = new URLSearchParams({
@@ -149,6 +160,7 @@ export const {
     getFileTree,
     createDirectory,
     searchFiles,
+    moveFile,
     getTags,
     createTag,
     healthCheck,
