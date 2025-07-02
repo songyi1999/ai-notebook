@@ -13,7 +13,7 @@ class File(Base):
     content_hash = Column(String)
     file_size = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    updated_at = Column(DateTime, default=func.now())
     is_deleted = Column(Boolean, default=False, index=True)
     parent_folder = Column(String, index=True)
     tags = Column(JSON)

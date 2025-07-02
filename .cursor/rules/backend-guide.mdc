@@ -76,13 +76,16 @@ class Settings(BaseSettings):
     CHROMA_DB_PATH: str = "./chroma_db"
     
     # AI模型配置
-    OLLAMA_API_URL: str = "http://localhost:11434"
-    OLLAMA_API_KEY: str = "ollama"
-    LLM_MODEL_NAME: str = "llama3.2:latest"
-    EMBEDDING_MODEL_NAME: str = "bge-m3:latest"
+    OPENAI_BASE_URL: str = "http://host.docker.internal:11434"
+    OPENAI_API_KEY: str = "ollama"
+    OPENAI_MODEL: str = "qwen2.5:0.5b"
+    EMBEDDING_MODEL_NAME: str = "quentinz/bge-large-zh-v1.5:latest"
+    LLM_TEMPERATURE: float = 0.7
+    LLM_MAX_TOKENS: int = 2048
+    EMBEDDING_DIMENSION: int = 1024
     
     # 文件存储配置
-    NOTES_ROOT_PATH: str = "./notes"
+    NOTES_DIRECTORY: str = "../notes"
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
     
     class Config:

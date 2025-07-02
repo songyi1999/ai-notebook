@@ -19,7 +19,7 @@ const ResizableSider: React.FC<ResizableSiderProps> = ({ width, onResize, childr
       height={0} // We only want to resize width
       onResize={(_, { size }) => onResize(size.width)}
       handle={<div className="react-resizable-handle" />}
-      draggableOpts={{ enableUserSelectHack: false }}
+      draggableOpts={{ enableUserSelectHack: true }}
     >
       <Sider
         width={width}

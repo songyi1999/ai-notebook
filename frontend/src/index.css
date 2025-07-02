@@ -16,18 +16,22 @@
 
 body {
   margin: 0;
+  padding: 0;
   display: flex;
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  height: 100vh;
+  width: 100%;
 }
 
 #root {
   /* max-width: 1280px; */
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  padding: 0;
+  text-align: left;
   width: 100%;
+  height: 100vh;
 }
 
 .App {
@@ -49,8 +53,10 @@ body {
 }
 
 /* Markdown 预览样式 */
-.markdown-preview {
+.markdown-preview,
+.markdown-body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  text-align: left;
 }
 
 .markdown-preview h1,
@@ -58,47 +64,61 @@ body {
 .markdown-preview h3,
 .markdown-preview h4,
 .markdown-preview h5,
-.markdown-preview h6 {
+.markdown-preview h6,
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
   margin-top: 24px;
   margin-bottom: 16px;
   font-weight: 600;
   line-height: 1.25;
 }
 
-.markdown-preview h1 {
+.markdown-preview h1,
+.markdown-body h1 {
   font-size: 2em;
   border-bottom: 1px solid #eaecef;
   padding-bottom: 10px;
 }
 
-.markdown-preview h2 {
+.markdown-preview h2,
+.markdown-body h2 {
   font-size: 1.5em;
   border-bottom: 1px solid #eaecef;
   padding-bottom: 8px;
 }
 
-.markdown-preview h3 {
+.markdown-preview h3,
+.markdown-body h3 {
   font-size: 1.25em;
 }
 
-.markdown-preview h4 {
+.markdown-preview h4,
+.markdown-body h4 {
   font-size: 1em;
 }
 
-.markdown-preview h5 {
+.markdown-preview h5,
+.markdown-body h5 {
   font-size: 0.875em;
 }
 
-.markdown-preview h6 {
+.markdown-preview h6,
+.markdown-body h6 {
   font-size: 0.85em;
   color: #6a737d;
 }
 
-.markdown-preview p {
+.markdown-preview p,
+.markdown-body p {
   margin-bottom: 16px;
 }
 
-.markdown-preview blockquote {
+.markdown-preview blockquote,
+.markdown-body blockquote {
   padding: 0 1em;
   color: #6a737d;
   border-left: 0.25em solid #dfe2e5;
@@ -106,16 +126,20 @@ body {
 }
 
 .markdown-preview ul,
-.markdown-preview ol {
+.markdown-preview ol,
+.markdown-body ul,
+.markdown-body ol {
   padding-left: 2em;
   margin-bottom: 16px;
 }
 
-.markdown-preview li {
+.markdown-preview li,
+.markdown-body li {
   margin-bottom: 4px;
 }
 
-.markdown-preview code {
+.markdown-preview code,
+.markdown-body code {
   padding: 0.2em 0.4em;
   margin: 0;
   font-size: 85%;
@@ -124,7 +148,8 @@ body {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
 
-.markdown-preview pre {
+.markdown-preview pre,
+.markdown-body pre {
   padding: 16px;
   overflow: auto;
   font-size: 85%;
@@ -134,35 +159,42 @@ body {
   margin-bottom: 16px;
 }
 
-.markdown-preview pre code {
+.markdown-preview pre code,
+.markdown-body pre code {
   background: transparent;
   padding: 0;
   margin: 0;
   font-size: 100%;
 }
 
-.markdown-preview table {
+.markdown-preview table,
+.markdown-body table {
   border-collapse: collapse;
   margin-bottom: 16px;
   width: 100%;
 }
 
 .markdown-preview table th,
-.markdown-preview table td {
+.markdown-preview table td,
+.markdown-body table th,
+.markdown-body table td {
   padding: 6px 13px;
   border: 1px solid #dfe2e5;
 }
 
-.markdown-preview table th {
+.markdown-preview table th,
+.markdown-body table th {
   font-weight: 600;
   background-color: #f6f8fa;
 }
 
-.markdown-preview table tr:nth-child(2n) {
+.markdown-preview table tr:nth-child(2n),
+.markdown-body table tr:nth-child(2n) {
   background-color: #f6f8fa;
 }
 
-.markdown-preview hr {
+.markdown-preview hr,
+.markdown-body hr {
   height: 0.25em;
   padding: 0;
   margin: 24px 0;
@@ -170,25 +202,30 @@ body {
   border: 0;
 }
 
-.markdown-preview a {
+.markdown-preview a,
+.markdown-body a {
   color: #0366d6;
   text-decoration: none;
 }
 
-.markdown-preview a:hover {
+.markdown-preview a:hover,
+.markdown-body a:hover {
   text-decoration: underline;
 }
 
-.markdown-preview strong {
+.markdown-preview strong,
+.markdown-body strong {
   font-weight: 600;
 }
 
-.markdown-preview em {
+.markdown-preview em,
+.markdown-body em {
   font-style: italic;
 }
 
 /* 双向链接样式 */
-.markdown-preview a[href*="[["] {
+.markdown-preview a[href*="[["],
+.markdown-body a[href*="[["] {
   color: #8b5cf6;
   background-color: rgba(139, 92, 246, 0.1);
   padding: 2px 4px;
@@ -197,13 +234,15 @@ body {
   border: 1px solid rgba(139, 92, 246, 0.2);
 }
 
-.markdown-preview a[href*="[["]:hover {
+.markdown-preview a[href*="[["]:hover,
+.markdown-body a[href*="[["]:hover {
   background-color: rgba(139, 92, 246, 0.2);
   border-color: rgba(139, 92, 246, 0.4);
 }
 
 /* 标签样式 */
-.markdown-preview span[data-tag] {
+.markdown-preview span[data-tag],
+.markdown-body span[data-tag] {
   color: #059669;
   background-color: rgba(5, 150, 105, 0.1);
   padding: 2px 6px;
@@ -226,4 +265,33 @@ body {
   #root {
     background-color: #ffffff;
   }
+}
+
+/* 编辑器专用Tabs样式 */
+.editor-tabs {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-tabs .ant-tabs-content-holder {
+  flex: 1;
+  overflow: hidden;
+}
+
+.editor-tabs .ant-tabs-content {
+  height: 100%;
+}
+
+.editor-tabs .ant-tabs-tabpane-active {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 确保body和html不会产生滚动条 */
+html, body {
+  overflow: hidden;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
 } 

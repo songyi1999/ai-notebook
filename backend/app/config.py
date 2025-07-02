@@ -20,8 +20,11 @@ class Settings(BaseSettings):
     openai_base_url: Optional[str] = None
     openai_model: str = "gpt-3.5-turbo"
     
+    # 嵌入模型配置
+    embedding_model_name: str = "text-embedding-ada-002"  # 默认OpenAI模型
+    
     # 文件存储配置
-    notes_directory: str = "../notes"  # 相对于backend目录，指向项目根目录的notes
+    notes_directory: str = "./notes"  # 相对于backend目录，在Docker中指向挂载的/app/notes
     max_file_size: int = 10 * 1024 * 1024  # 10MB
     
     # API配置
@@ -39,6 +42,7 @@ class Settings(BaseSettings):
     # 搜索配置
     search_limit: int = 50
     embedding_dimension: int = 1536  # OpenAI text-embedding-ada-002
+    semantic_search_threshold: float = 1.0  # 语义搜索距离阈值（距离越小越相似，小于此值的结果将被保留）
     
     class Config:
         env_file = ".env"

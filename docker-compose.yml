@@ -30,7 +30,7 @@ services:
       - SERVER_PORT=8000
       - DATABASE_URL=sqlite:///./data/ai_notebook.db
       - CHROMA_DB_PATH=./data/chroma_db
-      - OPENAI_API_KEY=
+      - OPENAI_API_KEY=ollama
       - OPENAI_BASE_URL=http://host.docker.internal:11434
       - EMBEDDING_MODEL_NAME=quentinz/bge-large-zh-v1.5:latest 
       - OPENAI_MODEL=qwen2.5:0.5b
@@ -40,6 +40,7 @@ services:
       - MAX_FILE_SIZE=10485760
       - SEARCH_CHUNK_SIZE=1000
       - SEARCH_OVERLAP=200
+      - SEMANTIC_SEARCH_THRESHOLD=1.0
     volumes:
       - ./backend/data:/app/data
       - ./notes:/app/notes

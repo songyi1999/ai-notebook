@@ -12,6 +12,7 @@ body {
 /* 文件树样式 */
 .file-tree-container {
   padding: 8px;
+  height: 100%;
 }
 
 .file-tree-container .ant-tree {
@@ -204,4 +205,13 @@ body {
   .editor-container {
     padding: 6px;
   }
+}
+
+/* 添加全局布局样式 */
+.ant-layout {
+  height: 100vh !important;
+}
+
+.ant-layout-content {
+  height: 100% !important;
 } 

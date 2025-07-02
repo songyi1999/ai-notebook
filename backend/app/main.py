@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database.init_db import init_db
-from .api import files, links, tags, ai
+from .api import files, links, tags, ai, index, tasks
 from .config import settings
 import logging
 
@@ -33,6 +33,32 @@ async def startup_event():
         logger.info("数据库初始化成功。")
         logger.info(f"笔记目录: {settings.notes_directory}")
         logger.info(f"OpenAI配置状态: {'已配置' if settings.openai_api_key else '未配置'}")
+        
+        # 启动后台任务处理（非阻塞）
+        import asyncio
+        import threading
+        def start_background_tasks():
+            try:
+                from .services.task_processor_service import TaskProcessorService
+                from .database.session import get_db
+                
+                db = next(get_db())
+                task_service = TaskProcessorService(db)
+                
+                logger.info("开始处理后台索引任务...")
+                task_service.process_all_pending_tasks()
+                logger.info("后台索引任务处理完成")
+                
+                db.close()
+                
+            except Exception as e:
+                logger.error(f"后台任务处理失败: {e}")
+        
+        # 在单独的线程中启动后台任务，不阻塞应用启动
+        background_thread = threading.Thread(target=start_background_tasks, daemon=True)
+        background_thread.start()
+        logger.info("后台任务处理线程已启动")
+        
     else:
         logger.error("数据库初始化失败，请检查日志。")
 
@@ -41,6 +67,8 @@ app.include_router(files.router, prefix=settings.api_prefix, tags=["files"])
 app.include_router(links.router, prefix=settings.api_prefix, tags=["links"])
 app.include_router(tags.router, prefix=settings.api_prefix, tags=["tags"])
 app.include_router(ai.router, prefix=settings.api_prefix, tags=["ai"])
+app.include_router(index.router, prefix=f"{settings.api_prefix}/index", tags=["index"])
+app.include_router(tasks.router, prefix=settings.api_prefix, tags=["tasks"])
 
 @app.get("/")
 async def root():

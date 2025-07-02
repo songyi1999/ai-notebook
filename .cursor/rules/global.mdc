@@ -4,3 +4,21 @@ globs:
 alwaysApply: true
 ---
 请始终 参考和维护 [README.md](mdc:README.md) [DATABASE.md](mdc:DATABASE.md) [开发计划.md](mdc:开发计划.md) [task.log](mdc:task.log)
+
+修改代码后需要重启docker，请使用：
+
+```bash
+cd frontend && npm run build && cd .. && docker-compose down && docker-compose up -d --build
+```
+
+或者使用简化命令：
+```bash
+docker-compose down && docker-compose up -d --build
+```
+
+前端修改完成后重建容器后可使用 playwright http://localhost:3000查看效果。
+
+
+
+
+注意：项目使用2个Docker服务(frontend + backend) + 外部Ollama服务的架构。

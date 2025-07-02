@@ -17,7 +17,9 @@ import {
   FolderAddOutlined,
   FileAddOutlined,
   EditOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  ReloadOutlined,
+  DatabaseOutlined
 } from '@ant-design/icons';
 import type { DataNode, TreeProps } from 'antd/es/tree';
 import type { MenuProps } from 'antd';
@@ -121,6 +123,26 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
       // 如果是文件夹，设置为当前选中文件夹
       setSelectedFolderPath(info.node.key.toString());
     }
+  };
+
+  // 处理双击事件 - 双击文件夹时展开/收缩
+  const handleDoubleClick = (e: React.MouseEvent, node: any) => {
+    // 只对文件夹响应双击事件
+    if (!node.isLeaf) {
+      const nodeKey = node.key;
+      
+      // 切换展开状态
+      if (expandedKeys.includes(nodeKey)) {
+        // 如果已展开，则收缩
+        setExpandedKeys(prev => prev.filter(key => key !== nodeKey));
+      } else {
+        // 如果未展开，则展开
+        setExpandedKeys(prev => [...prev, nodeKey]);
+      }
+    }
+    
+    // 阻止事件冒泡，避免触发其他事件
+    e.stopPropagation();
   };
 
   // 创建文件/目录
@@ -249,26 +271,82 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
 
   // 处理删除
   const handleDelete = async (nodePath: string) => {
-    try {
-      // 先获取文件信息
-      const fileInfo = await apiClient.getFileByPath(nodePath);
-      if (!fileInfo || !fileInfo.id) {
-        throw new Error('无法获取文件信息');
+    // 显示确认对话框
+    Modal.confirm({
+      title: '确认删除',
+      content: `确定要删除 "${nodePath}" 吗？此操作不可撤销，同时会删除数据库记录和向量索引。`,
+      okText: '确认删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          // 检查是否是文件
+          const isFile = nodePath.endsWith('.md');
+          
+          if (isFile) {
+            // 如果是文件，完整删除（包括物理文件）
+            try {
+              const fileInfo = await apiClient.getFileByPath(nodePath);
+              if (fileInfo && fileInfo.id) {
+                const result = await apiClient.deleteFile(fileInfo.id, true); // 使用完整删除
+                message.success(result.message || '文件删除成功');
+              } else {
+                message.warning('文件不在数据库中');
+              }
+            } catch (error) {
+              console.error('删除文件失败:', error);
+              message.error(`删除文件失败: ${error instanceof Error ? error.message : '未知错误'}`);
+            }
+          } else {
+            // 如果是文件夹，提示用户手动删除
+            message.warning('文件夹删除功能暂时不可用，请手动删除文件夹后点击刷新按钮');
+            return;
+          }
+          
+          await loadFileTree();
+          
+          // 如果删除的是当前选中的文件，清除选中状态
+          if (selectedKeys.includes(nodePath)) {
+            setSelectedKeys([]);
+          }
+        } catch (error) {
+          console.error('删除失败:', error);
+          message.error(`删除失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        }
       }
-      
-      // 删除文件
-      await apiClient.deleteFile(fileInfo.id);
-      message.success('删除成功');
-      await loadFileTree();
-      
-      // 如果删除的是当前选中的文件，清除选中状态
-      if (selectedKeys.includes(nodePath)) {
-        setSelectedKeys([]);
+    });
+  };
+
+  // 处理刷新
+  const handleRefresh = async () => {
+    message.info('正在刷新文件树...');
+    await loadFileTree();
+    message.success('文件树刷新完成');
+  };
+
+  // 处理重新索引
+  const handleRebuildIndex = async () => {
+    Modal.confirm({
+      title: '确认重新构建索引',
+      content: '此操作将删除所有数据库记录和向量索引，然后重新扫描文件构建索引。可能需要一些时间，确定继续吗？',
+      okText: '确认重建',
+      okType: 'primary',
+      cancelText: '取消',
+      onOk: async () => {
+        const hide = message.loading('正在重新构建索引，请稍候...', 0);
+        try {
+          await apiClient.rebuildIndex();
+          hide();
+          message.success('重新构建索引完成');
+          // 刷新文件树
+          await loadFileTree();
+        } catch (error) {
+          hide();
+          console.error('重新构建索引失败:', error);
+          message.error(`重新构建索引失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        }
       }
-    } catch (error) {
-      console.error('删除失败:', error);
-      message.error(`删除失败: ${error instanceof Error ? error.message : '未知错误'}`);
-    }
+    });
   };
 
   // 右键菜单项
@@ -319,7 +397,7 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
     return items;
   };
 
-  // 自定义标题渲染，添加选中状态样式
+  // 自定义标题渲染，添加选中状态样式和双击事件
   const renderTitle = (node: DataNode) => {
     const isSelected = selectedKeys.includes(node.key);
     const isSelectedFolder = !node.isLeaf && selectedFolderPath === node.key.toString();
@@ -330,12 +408,16 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
         trigger={['contextMenu']}
       >
         <Tooltip title={node.title?.toString()}>
-          <Space style={{
-            padding: '2px 4px',
-            borderRadius: '4px',
-            backgroundColor: isSelected || isSelectedFolder ? '#e6f7ff' : 'transparent',
-            border: isSelected || isSelectedFolder ? '1px solid #91d5ff' : '1px solid transparent'
-          }}>
+          <Space 
+            style={{
+              padding: '2px 4px',
+              borderRadius: '4px',
+              backgroundColor: isSelected || isSelectedFolder ? '#e6f7ff' : 'transparent',
+              border: isSelected || isSelectedFolder ? '1px solid #91d5ff' : '1px solid transparent',
+              cursor: !node.isLeaf ? 'pointer' : 'default' // 文件夹显示手型光标
+            }}
+            onDoubleClick={(e) => handleDoubleClick(e, node)}
+          >
             {!node.isLeaf ? <FolderOutlined /> : <FileOutlined />}
             <Text ellipsis style={{ maxWidth: '150px' }}>
               {node.title?.toString()}
@@ -351,22 +433,51 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
       <Spin spinning={loading}>
         <div style={{ marginBottom: 16 }}>
           <Space>
-            <Button
-              icon={<FileAddOutlined />}
-              onClick={() => showCreateModal('file')}
-            >
-              新建文件
-            </Button>
-            <Button
-              icon={<FolderAddOutlined />}
-              onClick={() => showCreateModal('folder')}
-            >
-              新建文件夹
-            </Button>
+            <Tooltip title="新建文件">
+              <Button
+                icon={<FileAddOutlined />}
+                onClick={() => showCreateModal('file')}
+              />
+            </Tooltip>
+            <Tooltip title="新建文件夹">
+              <Button
+                icon={<FolderAddOutlined />}
+                onClick={() => showCreateModal('folder')}
+              />
+            </Tooltip>
+            <Tooltip title="删除选中的文件/文件夹">
+              <Button
+                icon={<DeleteOutlined />}
+                danger
+                disabled={!selectedKeys.length}
+                onClick={() => {
+                  if (selectedKeys.length > 0) {
+                    handleDelete(selectedKeys[0].toString());
+                  }
+                }}
+              />
+            </Tooltip>
+            <Tooltip title="刷新文件树">
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={handleRefresh}
+              />
+            </Tooltip>
+            <Tooltip title="重新构建索引">
+              <Button
+                icon={<DatabaseOutlined />}
+                onClick={handleRebuildIndex}
+              />
+            </Tooltip>
           </Space>
           {/* 显示当前选中的文件夹 */}
           <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
             当前目录: {selectedFolderPath}
+            {selectedKeys.length > 0 && (
+              <span style={{ marginLeft: 16, color: '#1890ff' }}>
+                已选中: {selectedKeys[0].toString()}
+              </span>
+            )}
           </div>
         </div>
 

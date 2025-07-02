@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from ..services.ai_service import AIService
+from ..services.ai_service_langchain import AIService
 from ..services.file_service import FileService
 from ..database.session import get_db
+from ..config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -21,7 +25,7 @@ class TagSuggestionRequest(BaseModel):
 class SemanticSearchRequest(BaseModel):
     query: str
     limit: int = 10
-    similarity_threshold: float = 0.7
+    similarity_threshold: float = Field(default_factory=lambda: settings.semantic_search_threshold)
 
 class ContentAnalysisRequest(BaseModel):
     content: str
@@ -144,6 +148,36 @@ def generate_related_questions_api(request: RelatedQuestionsRequest, db: Session
     questions = ai_service.generate_related_questions(request.content, request.num_questions)
     
     return {"questions": questions}
+
+@router.post("/ai/discover-links/{file_id}")
+def discover_smart_links_api(file_id: int, db: Session = Depends(get_db)):
+    """智能发现文章间的链接关系"""
+    ai_service = AIService(db)
+    file_service = FileService(db)
+    
+    if not ai_service.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI服务不可用，请检查配置"
+        )
+    
+    # 获取文件
+    file = file_service.get_file(file_id)
+    if not file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文件不存在"
+        )
+    
+    try:
+        suggestions = ai_service.discover_smart_links(file_id, file.content, file.title)
+        return {"suggestions": suggestions}
+    except Exception as e:
+        logger.error(f"智能链接发现失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="智能链接发现失败"
+        )
 
 @router.get("/ai/status")
 def get_ai_status_api(db: Session = Depends(get_db)):

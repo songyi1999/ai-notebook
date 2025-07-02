@@ -102,6 +102,8 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   const [isModified, setIsModified] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   const [activeTab, setActiveTab] = useState('edit');
+  
+
 
   // 使用useRef来在回调中获取最新的状态
   const noteRef = useRef(currentNote);
@@ -145,24 +147,80 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     }
   };
 
-  // 监听文件切换
-  useEffect(() => {
-    // 如果当前有未保存的修改，可以提示用户
-    if (isModified) {
-      // 在实际应用中，这里应该弹出一个确认框
-      console.warn('当前笔记有未保存的修改！');
-    }
-    
-    if (currentFile) {
-      loadFileContent(currentFile.path);
-      console.log('切换到文件:', currentFile);
-    } else {
-      // 如果没有选中文件，则显示欢迎页
-      setCurrentNote(getDefaultContent());
-      setIsModified(false);
-      setSaveStatus('saved');
+  // 文件切换前的保存处理函数
+  const handleFileSwitch = useCallback(async () => {
+    // 如果当前有未保存的修改，立即保存
+    if (isModifiedRef.current) {
+      console.log('检测到未保存的修改，切换文件前自动保存');
+      try {
+        const noteToSave = noteRef.current;
+        if (!noteToSave.title.trim()) {
+          console.warn('标题为空，跳过保存');
+          return;
+        }
+
+        setSaveStatus('saving');
+        const originalPath = currentFile?.path;
+        const hasPathChanged = originalPath && originalPath !== noteToSave.file_path;
+        
+        if (noteToSave.id) {
+          // 如果文件路径发生了变化，需要先重命名文件
+          if (hasPathChanged) {
+            console.log('切换前检测到文件路径变化，执行重命名:', originalPath, '->', noteToSave.file_path);
+            try {
+              await apiClient.moveFile(originalPath, noteToSave.file_path);
+              console.log('切换前文件重命名成功');
+            } catch (error) {
+              console.error('切换前文件重命名失败:', error);
+              setSaveStatus('unsaved');
+              return;
+            }
+          }
+          
+          await apiClient.updateFile(noteToSave.id, {
+            title: noteToSave.title,
+            content: noteToSave.content,
+            file_path: noteToSave.file_path,
+          });
+        } else {
+          await apiClient.createFile({
+            title: noteToSave.title,
+            content: noteToSave.content,
+            file_path: noteToSave.file_path,
+            parent_folder: noteToSave.file_path.split('/').slice(0, -1).join('/') || 'notes'
+          });
+        }
+        
+        setIsModified(false);
+        setSaveStatus('saved');
+        console.log('文件切换前保存成功');
+      } catch (error) {
+        console.error('切换文件前保存失败:', error);
+        setSaveStatus('unsaved');
+      }
     }
   }, [currentFile]);
+
+  // 监听文件切换
+  useEffect(() => {
+    const switchFile = async () => {
+      // 先保存当前文件（如果有修改）
+      await handleFileSwitch();
+      
+      // 然后加载新文件
+      if (currentFile) {
+        loadFileContent(currentFile.path);
+        console.log('切换到文件:', currentFile);
+      } else {
+        // 如果没有选中文件，则显示欢迎页
+        setCurrentNote(getDefaultContent());
+        setIsModified(false);
+        setSaveStatus('saved');
+      }
+    };
+
+    switchFile();
+  }, [currentFile, handleFileSwitch]);
 
   // 保存笔记 - 使用 useCallback 避免不必要的重渲染
   const handleSave = useCallback(async () => {
@@ -175,7 +233,24 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     setSaveStatus('saving');
     try {
       let savedFile: FileResponse;
+      const originalPath = currentFile?.path;
+      const hasPathChanged = originalPath && originalPath !== noteToSave.file_path;
+      
       if (noteToSave.id) {
+        // 如果文件路径发生了变化，需要先重命名文件
+        if (hasPathChanged) {
+          console.log('检测到文件路径变化，执行重命名:', originalPath, '->', noteToSave.file_path);
+          try {
+            await apiClient.moveFile(originalPath, noteToSave.file_path);
+            console.log('文件重命名成功');
+          } catch (error) {
+            console.error('文件重命名失败:', error);
+            message.error(`重命名失败: ${error instanceof Error ? error.message : '未知错误'}`);
+            setSaveStatus('unsaved');
+            return;
+          }
+        }
+        
         // 更新现有文件
         savedFile = await apiClient.updateFile(noteToSave.id, {
           title: noteToSave.title,
@@ -207,13 +282,15 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
       setSaveStatus('saved');
       
       // 如果文件名发生变化，通知父组件
-      if (onFileChange && currentFile?.path !== noteToSave.file_path) {
+      if (onFileChange && (hasPathChanged || currentFile?.path !== noteToSave.file_path)) {
         onFileChange(noteToSave.file_path, noteToSave.title);
       }
 
       console.log('保存笔记成功:', {
         id: savedFile.id,
         title: savedFile.title,
+        path: savedFile.file_path,
+        renamed: hasPathChanged,
         timestamp: new Date().toISOString()
       });
 
@@ -224,13 +301,13 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     }
   }, [onFileChange, currentFile]);
 
-  // 自动保存逻辑
+  // 自动保存逻辑 - 修改为30秒自动保存
   useEffect(() => {
     if (!isModified) return;
 
     const handler = setTimeout(() => {
       handleSave();
-    }, 1000); // 1秒后自动保存
+    }, 30000); // 30秒后自动保存
 
     // 清理函数
     return () => {
@@ -348,25 +425,45 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', borderLeft: '1px solid #f0f0f0' }}>
-      {/* 头部区域 */}
-      <div style={{ padding: '8px 16px', borderBottom: '1px solid #f0f0f0', flexShrink: 0 }}>
-        <Input
-          placeholder="输入笔记标题..."
-          value={currentNote.title}
-          onChange={handleTitleChange}
-          style={{ fontSize: '20px', fontWeight: 'bold', border: 'none', boxShadow: 'none' }}
-          prefix={<FileTextOutlined style={{ marginRight: 8, color: '#1890ff' }} />}
-        />
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: '100%',
+      minHeight: 0
+    }}>
+      {/* 顶部笔记信息栏 */}
+      <div style={{ 
+        padding: '8px 16px', 
+        borderBottom: '1px solid #f0f0f0', 
+        flexShrink: 0 
+      }}>
+        <Space>
+          <FileTextOutlined />
+          <Input 
+            placeholder="输入笔记标题..."
+            value={currentNote?.title || ''}
+            onChange={handleTitleChange}
+            style={{ fontSize: '16px', fontWeight: '500', border: 'none', boxShadow: 'none' }}
+          />
+        </Space>
       </div>
 
-      {/* 编辑器和预览 */}
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        <Tabs 
-          activeKey={activeTab} 
+      {/* 编辑器和预览区域 */}
+      <div style={{ 
+        flex: 1, 
+        minHeight: 0,
+        overflow: 'hidden',
+        position: 'relative'
+      }}>
+        <Tabs
+          className="editor-tabs"
+          activeKey={activeTab}
           onChange={setActiveTab}
-          size="small"
-          style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+          style={{ 
+            height: '100%',
+            minHeight: 0,
+            overflow: 'hidden'
+          }}
           tabBarExtraContent={
             <Space>
               {renderSaveStatus()}
@@ -391,13 +488,22 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                 </span>
               ),
               children: (
-                <div style={{ height: 'calc(100vh - 175px)', border: '1px solid #d9d9d9', borderRadius: '6px', overflow: 'hidden' }}>
+                <div style={{ 
+                  height: '100%',
+                  border: '1px solid #d9d9d9', 
+                  borderRadius: '6px', 
+                  overflow: 'hidden'
+                }}>
                   <Editor
                     height="100%"
                     language="markdown"
                     value={currentNote.content}
                     onChange={handleContentChange}
-                    options={{ minimap: { enabled: false } }}
+                    options={{ 
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true
+                    }}
                   />
                 </div>
               )
@@ -413,7 +519,11 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
               children: (
                 <div 
                   className="markdown-body"
-                  style={{ height: 'calc(100vh - 175px)', overflowY: 'auto', padding: '16px' }} 
+                  style={{ 
+                    height: '100%',
+                    overflow: 'auto', 
+                    padding: '16px'
+                  }} 
                   dangerouslySetInnerHTML={renderMarkdown()} 
                 />
               ),
@@ -422,14 +532,19 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
         />
       </div>
 
-      {/* 底部文件信息栏 */}
+      {/* 底部文件信息栏 - 修改样式 */}
       <div style={{
-        padding: '6px 16px',
-        borderTop: '1px solid #f0f0f0',
-        background: '#fafafa',
-        flexShrink: 0,
+        padding: '8px 16px',
+        borderTop: '1px solid #d9d9d9',
+        background: '#f5f5f5',
         fontSize: '12px',
-        color: '#666'
+        color: '#333',
+        display: 'flex',
+        alignItems: 'center',
+        boxShadow: '0 -1px 2px rgba(0,0,0,0.1)',
+        minHeight: '32px',
+        flexShrink: 0,
+        overflow: 'auto'
       }}>
         <Space split={<span style={{ color: '#d9d9d9' }}>|</span>} size="small">
           <span>字数: {getWordCount()}</span>
@@ -443,6 +558,8 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
           )}
         </Space>
       </div>
+
+
     </div>
   );
 };

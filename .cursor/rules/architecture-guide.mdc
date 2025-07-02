@@ -10,7 +10,7 @@ alwaysApply: false
 ### 精简高效
 - 去掉了不必要的复杂组件（如Redis缓存、Elasticsearch、知识图谱）
 - 使用轻量级方案替代重型组件
-- 服务数量从5个减少到3个核心服务
+- 核心服务精简为2个Docker容器 + 外部AI服务
 
 ### 纯本地化
 - 所有数据和AI模型都在本地运行
@@ -41,11 +41,12 @@ alwaysApply: false
 - 实现混合搜索（FTS5关键词搜索 + ChromaDB语义搜索）
 
 ### AI模型管理
-**决策**：统一通过Ollama管理
+**决策**：通过OpenAI兼容接口连接外部Ollama服务
 **方案**：
-- LLM和嵌入模型都通过Ollama管理
+- LLM和嵌入模型都通过外部Ollama管理
 - 使用OpenAI兼容接口调用
 - 通过环境变量配置API地址、密钥、模型名称
+- Docker网络通过host.docker.internal访问宿主机Ollama服务
 
 ### 知识图谱功能
 **决策**：去掉复杂的知识图谱功能
@@ -112,27 +113,51 @@ alwaysApply: false
 ### 数据库配置  
 - DATABASE_URL, CHROMA_DB_PATH
 
-### AI模型配置
-- OLLAMA_API_URL, OLLAMA_API_KEY
-- LLM_MODEL_NAME, EMBEDDING_MODEL_NAME
+### AI模型配置（实际使用的变量名）
+- OPENAI_BASE_URL, OPENAI_API_KEY
+- OPENAI_MODEL, EMBEDDING_MODEL_NAME
+- LLM_TEMPERATURE, LLM_MAX_TOKENS
+- EMBEDDING_DIMENSION
 
 ### 搜索引擎配置
 - SEARCH_CHUNK_SIZE, SEARCH_OVERLAP
 
 ### 文件存储配置
-- NOTES_ROOT_PATH, MAX_FILE_SIZE
+- NOTES_DIRECTORY, MAX_FILE_SIZE
 
 ## 服务架构
 
-### 3个核心服务
-1. **frontend-service** - React前端应用
-2. **backend-service** - FastAPI + SQLite + ChromaDB
-3. **llm-service** - Ollama AI模型服务
+### 2个核心Docker服务 + 外部AI服务
+1. **frontend** - React前端应用（端口3000）
+2. **backend** - FastAPI + SQLite + ChromaDB（端口8000）
+3. **外部Ollama服务** - 在宿主机运行的AI模型服务（端口11434）
 
 ### 服务通信
 - 前端通过HTTP API与后端通信
-- 后端通过OpenAI兼容接口与Ollama通信
-- 所有服务通过Docker网络连接
+- 后端通过host.docker.internal:11434访问宿主机Ollama服务
+- 使用OpenAI兼容接口与Ollama通信
+- 前后端服务通过Docker网络连接
+
+### 实际Docker配置
+```yaml
+# 实际的docker-compose.yml配置
+services:
+  frontend:
+    build: ./frontend
+    ports: ["3000:80"]
+    depends_on: [backend]
+    
+  backend:
+    build: ./backend
+    ports: ["8000:8000"]
+    environment:
+      - OPENAI_BASE_URL=http://host.docker.internal:11434
+      - EMBEDDING_MODEL_NAME=quentinz/bge-large-zh-v1.5:latest
+      - OPENAI_MODEL=qwen2.5:0.5b
+    volumes:
+      - ./backend/data:/app/data
+      - ./notes:/app/notes
+```
 
 ## 开发指导
 
@@ -155,4 +180,9 @@ alwaysApply: false
 - 异步处理耗时操作
 - 向量搜索结果缓存
 - 文件变更检测优化
+
+### 启动时自动重建机制
+- **完全重建策略**：每次容器重启时自动删除现有数据库和向量库
+- **避免数据不一致**：消除数据库状态不一致导致的各种错误
+- **简化维护逻辑**：不再需要复杂的增量更新和状态检查
 
