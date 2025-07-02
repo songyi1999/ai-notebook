@@ -20,20 +20,13 @@ mkdir -p ../notes
 
 echo "================================================"
 echo "启动时将执行以下操作："
-echo "1. 清理现有SQLite数据库文件"
-echo "2. 清理现有向量数据库目录"
-echo "3. 重新创建数据库表结构"
+echo "1. 检查数据库健康状态"
+echo "2. 如果数据库损坏，则清理并重建"
+echo "3. 如果数据库正常，则保持现有数据"
 echo "4. 扫描notes目录中的所有文件"
-echo "5. 重建SQLite索引和FTS全文搜索"
-echo "6. 重建向量索引"
+echo "5. 增量更新数据库索引"
+echo "6. 在后台处理向量索引更新"
 echo "================================================"
-
-# 强制清理损坏的数据库文件
-echo "清理现有数据库文件..."
-rm -f data/*.db
-rm -f data/*.db-*
-rm -rf data/chroma_db
-mkdir -p data/chroma_db
 
 # 启动FastAPI应用
 echo "启动FastAPI应用..."
