@@ -31,7 +31,7 @@ services:
       - DATABASE_URL=sqlite:///./data/ai_notebook.db
       - CHROMA_DB_PATH=./data/chroma_db
       - OPENAI_API_KEY=ollama
-      - OPENAI_BASE_URL=http://host.docker.internal:11434
+      - OPENAI_BASE_URL=http://host.docker.internal:11434/v1
       - EMBEDDING_MODEL_NAME=quentinz/bge-large-zh-v1.5:latest 
       - OPENAI_MODEL=qwen2.5:0.5b
       - LLM_TEMPERATURE=0.7

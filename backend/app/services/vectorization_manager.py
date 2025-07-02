@@ -44,10 +44,7 @@ class VectorizationManager:
             # 2. 添加向量化任务（带去重）
             vector_task_added = self._add_vectorization_task(file.id, file.file_path)
             
-            # 3. 添加FTS索引任务（带去重）
-            fts_task_added = self._add_fts_index_task(file.id, file.file_path)
-            
-            logger.info(f"文件更新处理完成: {file_path}, 向量任务: {vector_task_added}, FTS任务: {fts_task_added}")
+            logger.info(f"文件更新处理完成: {file_path}, 向量任务: {vector_task_added}")
             return True
             
         except Exception as e:
@@ -78,11 +75,8 @@ class VectorizationManager:
             # 2. 立即执行向量化
             vector_success = self._execute_vectorization(file)
             
-            # 3. 立即执行FTS索引
-            fts_success = self._execute_fts_indexing(file)
-            
-            logger.info(f"文件立即处理完成: {file_path}, 向量化: {vector_success}, FTS: {fts_success}")
-            return vector_success and fts_success
+            logger.info(f"文件立即处理完成: {file_path}, 向量化: {vector_success}")
+            return vector_success
             
         except Exception as e:
             logger.error(f"立即处理文件失败: {file_path}, 错误: {e}")
@@ -123,9 +117,7 @@ class VectorizationManager:
         """添加向量化任务（带去重）"""
         return self.task_processor.add_task(file_id, file_path, "vector_index", priority)
     
-    def _add_fts_index_task(self, file_id: int, file_path: str, priority: int = 1) -> bool:
-        """添加FTS索引任务（带去重）"""
-        return self.task_processor.add_task(file_id, file_path, "fts_index", priority)
+
     
     def _execute_vectorization(self, file: File) -> bool:
         """执行向量化"""
@@ -151,22 +143,7 @@ class VectorizationManager:
             logger.error(f"执行向量化失败: {file.file_path}, 错误: {e}")
             return False
     
-    def _execute_fts_indexing(self, file: File) -> bool:
-        """执行FTS索引"""
-        try:
-            # 重建FTS索引
-            success = self.index_service.rebuild_fts_index()
-            
-            if success:
-                logger.info(f"FTS索引处理成功: {file.file_path}")
-            else:
-                logger.error(f"FTS索引处理失败: {file.file_path}")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"执行FTS索引失败: {file.file_path}, 错误: {e}")
-            return False
+
     
     def get_pending_tasks_count(self) -> Dict[str, int]:
         """获取待处理任务统计"""
@@ -176,20 +153,14 @@ class VectorizationManager:
                 PendingTask.status == "pending"
             ).count()
             
-            fts_count = self.db.query(PendingTask).filter(
-                PendingTask.task_type == "fts_index", 
-                PendingTask.status == "pending"
-            ).count()
-            
             return {
                 "vector_index": vector_count,
-                "fts_index": fts_count,
-                "total": vector_count + fts_count
+                "total": vector_count
             }
             
         except Exception as e:
             logger.error(f"获取任务统计失败: {e}")
-            return {"vector_index": 0, "fts_index": 0, "total": 0}
+            return {"vector_index": 0, "total": 0}
     
     def clear_duplicate_tasks(self) -> int:
         """清理重复的待处理任务"""

@@ -12,6 +12,8 @@ import requests
 import os
 import hashlib
 import threading
+import time
+from functools import lru_cache
 
 from ..models.file import File
 from ..models.embedding import Embedding
@@ -47,7 +49,12 @@ class OpenAICompatibleEmbeddings(Embeddings):
     def _get_embedding(self, text: str) -> List[float]:
         """使用OpenAI兼容接口获取嵌入向量"""
         try:
-            url = f"{self.base_url}/v1/embeddings"
+            # 确保URL格式正确，避免重复的/v1
+            base_url = self.base_url.rstrip('/')
+            if base_url.endswith('/v1'):
+                url = f"{base_url}/embeddings"
+            else:
+                url = f"{base_url}/v1/embeddings"
             payload = {
                 "model": self.model,
                 "input": text,
@@ -136,9 +143,17 @@ class AIService:
                 base_url=self.openai_base_url,
                 model=settings.openai_model
             )
+            # 初始化流式LLM
+            self.streaming_llm = ChatOpenAI(
+                openai_api_key=self.openai_api_key,
+                base_url=self.openai_base_url,
+                model=settings.openai_model,
+                streaming=True
+            )
         else:
             logger.warning("未配置OpenAI API密钥，AI功能将不可用")
             self.llm = None
+            self.streaming_llm = None
         
         # 初始化嵌入模型
         self.embeddings = OpenAICompatibleEmbeddings(
@@ -157,6 +172,11 @@ class AIService:
         # 使用单例管理器获取向量存储
         self.chroma_manager = ChromaDBManager()
         self.vector_store = self.chroma_manager.get_vector_store()
+        
+        # 添加查询向量缓存
+        self._query_cache = {}
+        self._cache_lock = threading.Lock()
+        self._max_cache_size = 100  # 最大缓存100个查询
 
     def is_available(self) -> bool:
         """检查AI服务是否可用"""
@@ -236,7 +256,7 @@ class AIService:
             return False
 
     def semantic_search(self, query: str, limit: int = 10, similarity_threshold: float = None) -> List[Dict[str, Any]]:
-        """语义搜索 - 使用LangChain简化版本"""
+        """语义搜索 - 使用LangChain简化版本，带缓存优化"""
         if not self.is_available():
             logger.warning("AI服务不可用，无法进行语义搜索")
             return []
@@ -246,9 +266,10 @@ class AIService:
             similarity_threshold = settings.semantic_search_threshold
         
         try:
+            start_time = time.time()
             logger.info(f"开始LangChain语义搜索，查询: {query}, 阈值: {similarity_threshold}")
             
-            # 使用LangChain的similarity_search_with_score方法
+            # 使用LangChain的similarity_search_with_score方法（带缓存优化）
             search_results = self.vector_store.similarity_search_with_score(
                 query=query,
                 k=limit * 2,  # 获取更多结果用于过滤
@@ -310,7 +331,8 @@ class AIService:
             for result in results[:limit]:
                 result.pop('distance', None)
             
-            logger.info(f"LangChain语义搜索完成，查询: {query}, 过滤后结果: {len(results)}")
+            total_time = time.time() - start_time
+            logger.info(f"LangChain语义搜索完成，查询: {query}, 过滤后结果: {len(results)}, 总耗时: {total_time:.3f}秒")
             return results
             
         except Exception as e:
@@ -596,3 +618,236 @@ class AIService:
         except Exception as e:
             logger.error(f"智能链接发现失败: {e}")
             return []
+
+    def _get_cached_query_embedding(self, query: str) -> List[float]:
+        """获取缓存的查询向量"""
+        with self._cache_lock:
+            query_hash = hashlib.md5(query.encode()).hexdigest()
+            
+            if query_hash in self._query_cache:
+                logger.info(f"使用缓存的查询向量: {query[:50]}...")
+                return self._query_cache[query_hash]
+            
+            # 生成新的查询向量
+            embedding = self.embeddings.embed_query(query)
+            
+            # 缓存管理：如果缓存过大，清理最旧的条目
+            if len(self._query_cache) >= self._max_cache_size:
+                # 简单的FIFO清理策略
+                oldest_key = next(iter(self._query_cache))
+                del self._query_cache[oldest_key]
+                logger.info(f"查询向量缓存已满，清理最旧条目")
+            
+            self._query_cache[query_hash] = embedding
+            logger.info(f"生成并缓存新的查询向量: {query[:50]}...")
+            return embedding
+
+    def chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5) -> Dict[str, Any]:
+        """基于上下文的智能问答 - RAG实现"""
+        if not self.is_available():
+            logger.warning("AI服务不可用，无法进行智能问答")
+            return {
+                "answer": "抱歉，AI服务当前不可用，请检查配置。",
+                "related_documents": [],
+                "search_query": question,
+                "error": "AI服务不可用"
+            }
+        
+        try:
+            start_time = time.time()
+            logger.info(f"开始RAG问答，问题: {question}")
+            
+            # 1. 语义搜索相关文档
+            search_results = self.semantic_search(
+                query=question,
+                limit=search_limit,
+                similarity_threshold=settings.semantic_search_threshold
+            )
+            
+            logger.info(f"搜索到 {len(search_results)} 个相关文档")
+            
+            # 2. 构建上下文
+            context_parts = []
+            related_docs = []
+            current_length = 0
+            
+            for result in search_results:
+                chunk_text = result.get('chunk_text', '')
+                file_path = result.get('file_path', '')
+                title = result.get('title', '')
+                similarity = result.get('similarity', 0)
+                
+                # 准备上下文片段
+                context_part = f"文档：{title}\n路径：{file_path}\n内容：{chunk_text}\n"
+                
+                # 检查长度限制
+                if current_length + len(context_part) > max_context_length:
+                    logger.info(f"上下文长度达到限制 {max_context_length}，停止添加更多文档")
+                    break
+                
+                context_parts.append(context_part)
+                current_length += len(context_part)
+                
+                # 添加到相关文档列表（用于前端显示）
+                related_docs.append({
+                    'file_id': result.get('file_id'),
+                    'file_path': file_path,
+                    'title': title,
+                    'similarity': similarity,
+                    'chunk_text': chunk_text[:200] + '...' if len(chunk_text) > 200 else chunk_text
+                })
+            
+            context = "\n\n".join(context_parts)
+            
+            # 3. 构建提示词
+            prompt = f"""你是一个智能助手，专门回答基于用户笔记内容的问题。请根据以下相关文档内容来回答用户的问题。
+
+用户问题：{question}
+
+相关文档内容：
+{context}
+
+请根据上述文档内容回答用户的问题。要求：
+1. 回答要准确、有用，基于提供的文档内容
+2. 如果文档内容不足以完全回答问题，请说明并提供你能确定的部分
+3. 回答要简洁明了，重点突出
+4. 如果可能，请引用具体的文档来源
+
+回答："""
+
+            # 4. 调用LLM生成回答
+            logger.info(f"调用LLM生成回答，上下文长度: {len(context)} 字符")
+            response = self.llm.invoke(prompt)
+            answer = response.content.strip()
+            
+            total_time = time.time() - start_time
+            logger.info(f"RAG问答完成，耗时: {total_time:.3f}秒，回答长度: {len(answer)} 字符")
+            
+            return {
+                "answer": answer,
+                "related_documents": related_docs,
+                "search_query": question,
+                "context_length": len(context),
+                "processing_time": round(total_time, 3)
+            }
+            
+        except Exception as e:
+            logger.error(f"RAG问答失败: {e}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
+            
+            return {
+                "answer": f"抱歉，处理您的问题时出现了错误：{str(e)}",
+                "related_documents": [],
+                "search_query": question,
+                "error": str(e)
+            }
+
+    async def streaming_chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5):
+        """基于上下文的流式智能问答 - RAG实现"""
+        if not self.is_available() or not self.streaming_llm:
+            logger.warning("AI服务或流式LLM不可用，无法进行流式智能问答")
+            yield {
+                "error": "AI服务不可用",
+                "related_documents": [],
+                "search_query": question
+            }
+            return
+        
+        try:
+            start_time = time.time()
+            logger.info(f"开始流式RAG问答，问题: {question}")
+            
+            # 1. 语义搜索相关文档
+            search_results = self.semantic_search(
+                query=question,
+                limit=search_limit,
+                similarity_threshold=settings.semantic_search_threshold
+            )
+            
+            logger.info(f"搜索到 {len(search_results)} 个相关文档")
+            
+            # 2. 构建上下文
+            context_parts = []
+            related_docs = []
+            current_length = 0
+            
+            for result in search_results:
+                chunk_text = result.get('chunk_text', '')
+                file_path = result.get('file_path', '')
+                title = result.get('title', '')
+                similarity = result.get('similarity', 0)
+                
+                # 准备上下文片段
+                context_part = f"文档：{title}\n路径：{file_path}\n内容：{chunk_text}\n"
+                
+                # 检查长度限制
+                if current_length + len(context_part) > max_context_length:
+                    logger.info(f"上下文长度达到限制 {max_context_length}，停止添加更多文档")
+                    break
+                
+                context_parts.append(context_part)
+                current_length += len(context_part)
+                
+                # 添加到相关文档列表（用于前端显示）
+                related_docs.append({
+                    'file_id': result.get('file_id'),
+                    'file_path': file_path,
+                    'title': title,
+                    'similarity': similarity,
+                    'chunk_text': chunk_text[:200] + '...' if len(chunk_text) > 200 else chunk_text
+                })
+            
+            context = "\n\n".join(context_parts)
+            
+            # 3. 构建提示词
+            prompt = f"""你是一个智能助手，专门回答基于用户笔记内容的问题。请根据以下相关文档内容来回答用户的问题。
+
+用户问题：{question}
+
+相关文档内容：
+{context}
+
+请根据上述文档内容回答用户的问题。要求：
+1. 回答要准确、有用，基于提供的文档内容
+2. 如果文档内容不足以完全回答问题，请说明并提供你能确定的部分
+3. 回答要简洁明了，重点突出
+4. 如果可能，请引用具体的文档来源
+
+回答："""
+
+            # 4. 流式调用LLM生成回答
+            logger.info(f"开始流式调用LLM，上下文长度: {len(context)} 字符")
+            
+            # 使用LangChain的astream方法进行真正的流式输出
+            async for chunk in self.streaming_llm.astream(prompt):
+                if chunk.content:  # 只有当chunk有内容时才yield
+                    yield {
+                        "chunk": chunk.content,
+                        "related_documents": related_docs,
+                        "search_query": question,
+                        "context_length": len(context)
+                    }
+            
+            # 流式结束后发送最终统计信息
+            total_time = time.time() - start_time
+            logger.info(f"流式RAG问答完成，耗时: {total_time:.3f}秒")
+            
+            yield {
+                "finished": True,
+                "processing_time": round(total_time, 3),
+                "related_documents": related_docs,
+                "search_query": question,
+                "context_length": len(context)
+            }
+            
+        except Exception as e:
+            logger.error(f"流式RAG问答失败: {e}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
+            
+            yield {
+                "error": str(e),
+                "related_documents": [],
+                "search_query": question
+            }

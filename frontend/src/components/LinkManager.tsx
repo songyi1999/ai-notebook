@@ -164,13 +164,16 @@ const LinkManager: React.FC<LinkManagerProps> = ({
         if (!fileId) return;
 
         try {
-            await createLink({
+            const newLink = {
                 source_file_id: fileId,
                 target_file_id: suggestion.target_file_id,
                 link_type: suggestion.link_type,
-                link_text: suggestion.suggested_text || suggestion.reason,
-                anchor_text: suggestion.suggested_text
-            });
+                description: suggestion.description,
+                link_text: suggestion.description,
+                anchor_text: suggestion.description
+            };
+
+            await createLink(newLink);
             
             // 移除已应用的建议
             setSmartSuggestions(prev => prev.filter(s => s.target_file_id !== suggestion.target_file_id));
@@ -478,11 +481,12 @@ const LinkManager: React.FC<LinkManagerProps> = ({
                                                     description={
                                                         <div>
                                                             <Text type="secondary">理由: </Text>
-                                                            <Text>{suggestion.reason}</Text>
-                                                            {suggestion.suggested_text && (
-                                                                <div>
-                                                                    <Text type="secondary">建议文本: </Text>
-                                                                    <Text>{suggestion.suggested_text}</Text>
+                                                            <Text>{suggestion.description}</Text>
+                                                            {suggestion.description && (
+                                                                <div style={{ marginTop: '4px' }}>
+                                                                    <Text type="secondary" style={{ fontSize: '12px' }}>
+                                                                        <Text>{suggestion.description}</Text>
+                                                                    </Text>
                                                                 </div>
                                                             )}
                                                         </div>

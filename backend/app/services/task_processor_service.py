@@ -159,9 +159,7 @@ class TaskProcessorService:
             if task.task_type == "vector_index":
                 # 处理向量索引任务
                 success = self._process_vector_index_task(file)
-            elif task.task_type == "fts_index":
-                # 处理全文搜索索引任务
-                success = self._process_fts_index_task(file)
+
             else:
                 raise Exception(f"未知任务类型: {task.task_type}")
             
@@ -228,19 +226,7 @@ class TaskProcessorService:
             logger.error(f"处理向量索引任务失败: {file.file_path}, 错误: {e}")
             return False
     
-    def _process_fts_index_task(self, file: File) -> bool:
-        """处理全文搜索索引任务"""
-        try:
-            index_service = IndexService(self.db)
-            
-            # 更新FTS索引（通过数据库触发器自动处理）
-            # 这里只需要确保文件内容已更新到数据库即可
-            logger.info(f"FTS索引处理成功: {file.file_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"处理FTS索引任务失败: {file.file_path}, 错误: {e}")
-            return False
+
     
     def process_all_pending_tasks(self):
         """处理所有待处理任务"""

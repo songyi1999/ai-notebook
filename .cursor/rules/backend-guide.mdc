@@ -322,36 +322,32 @@ def get_db():
         db.close()
 ```
 
-### FTS5全文搜索
+### 关键词搜索
 
 ```python
 # app/services/search_service.py
-from sqlalchemy import text
+from sqlalchemy import text, or_
 
 class SearchService:
     def __init__(self, db_session):
         self.db = db_session
     
     async def keyword_search(self, query: str, limit: int = 10):
-        """FTS5关键词搜索"""
-        sql = text("""
-            SELECT f.id, f.file_path, f.title, f.content,
-                   snippet(files_fts, 2, '<mark>', '</mark>', '...', 50) as snippet,
-                   rank as score
-            FROM files_fts 
-            JOIN files f ON files_fts.rowid = f.id
-            WHERE files_fts MATCH :query
-            AND f.is_deleted = 0
-            ORDER BY rank
-            LIMIT :limit
-        """)
+        """LIKE模糊搜索"""
+        search_pattern = f"%{query}%"
+        files = self.db.query(File).filter(
+            or_(
+                File.title.like(search_pattern),
+                File.content.like(search_pattern)
+            ),
+            File.is_deleted == False
+        ).limit(limit).all()
         
-        result = self.db.execute(sql, {"query": query, "limit": limit})
-        return result.fetchall()
+        return files
     
     async def mixed_search(self, query: str, limit: int = 10):
-        """混合搜索：FTS5 + ChromaDB"""
-        # 1. FTS5搜索
+        """混合搜索：关键词 + ChromaDB"""
+        # 1. 关键词搜索
         keyword_results = await self.keyword_search(query, limit // 2)
         
         # 2. 语义搜索

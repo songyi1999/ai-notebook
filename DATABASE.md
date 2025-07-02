@@ -244,39 +244,23 @@ CREATE TABLE system_config (
 CREATE INDEX idx_system_config_key ON system_config(config_key);
 ```
 
-### 10. files_fts (全文搜索虚拟表)
+### 10. 搜索功能说明
 
-使用SQLite的FTS5扩展，为`files`表的`title`和`content`字段提供高性能的全文检索能力。
+关键词搜索现在使用SQLite的LIKE操作符进行模糊匹配，支持标题和内容的全文搜索。
 
 ```sql
--- 创建FTS虚拟表来索引文件内容
-CREATE VIRTUAL TABLE files_fts USING fts5(
-    title, 
-    content, 
-    content='files', 
-    content_rowid='id',
-    tokenize = 'porter unicode61'
-);
-
--- 创建触发器，在 files 表发生增删改时，自动同步更新 FTS 索引
-CREATE TRIGGER files_ai AFTER INSERT ON files BEGIN
-    INSERT INTO files_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
-END;
-
-CREATE TRIGGER files_ad AFTER DELETE ON files BEGIN
-    INSERT INTO files_fts(files_fts, rowid, title, content) VALUES ('delete', old.id, old.title, old.content);
-END;
-
-CREATE TRIGGER files_au AFTER UPDATE ON files BEGIN
-    INSERT INTO files_fts(files_fts, rowid, title, content) VALUES ('delete', old.id, old.title, old.content);
-    INSERT INTO files_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
-END;
+-- 关键词搜索示例
+SELECT * FROM files 
+WHERE (title LIKE '%keyword%' OR content LIKE '%keyword%') 
+AND is_deleted = FALSE 
+LIMIT 50;
 ```
 
-**说明：**
-- `content='files', content_rowid='id'`: 将此FTS表与`files`表关联起来。
-- `tokenize = 'porter unicode61'`: 使用强大的`porter`分词器，支持英文词干提取，并兼容Unicode，对中文也有基础支持。
-- **触发器 (Triggers)**: 这是实现的关键。它们保证了当您在`files`表中增、删、改笔记时，`files_fts`索引表会自动实时更新，无需任何额外的应用层代码来维护索引同步。
+**搜索特点：**
+- **简单可靠**：使用LIKE操作符，兼容性好，不依赖FTS扩展
+- **中文友好**：对中文搜索支持良好，无分词问题
+- **模糊匹配**：支持部分关键词匹配
+- **性能适中**：对于中等规模数据集性能表现良好
 
 ## 视图定义
 

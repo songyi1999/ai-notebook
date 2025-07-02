@@ -386,25 +386,8 @@ class FileService:
             self.db.rollback()
             raise
 
-    def search_files_fts(self, query_str: str, limit: int = 50) -> List[File]:
-        """使用FTS5进行全文搜索，支持中文"""
-        try:
-            # 使用IndexService的中文搜索功能
-            from .index_service import IndexService
-            index_service = IndexService(self.db)
-            
-            results = index_service.search_with_chinese_support(query_str, limit)
-            
-            logger.info(f"FTS搜索完成，查询: {query_str}, 结果数: {len(results)}")
-            return results
-            
-        except Exception as e:
-            logger.error(f"FTS搜索失败: {e}")
-            # 如果FTS搜索失败，回退到普通搜索
-            return self.search_files_fallback(query_str, limit)
-
-    def search_files_fallback(self, query_str: str, limit: int = 50) -> List[File]:
-        """回退搜索方法（使用LIKE）"""
+    def search_files(self, query_str: str, skip: int = 0, limit: int = 100) -> List[File]:
+        """使用LIKE进行关键词搜索"""
         try:
             search_pattern = f"%{query_str}%"
             results = self.db.query(File).filter(
@@ -415,12 +398,8 @@ class FileService:
                 File.is_deleted == False
             ).limit(limit).all()
             
-            logger.info(f"回退搜索完成，查询: {query_str}, 结果数: {len(results)}")
+            logger.info(f"关键词搜索完成，查询: {query_str}, 结果数: {len(results)}")
             return results
         except Exception as e:
-            logger.error(f"回退搜索失败: {e}")
-            return []
-
-    def search_files(self, query_str: str, skip: int = 0, limit: int = 100) -> List[File]:
-        """保持原有接口兼容性"""
-        return self.search_files_fts(query_str, limit) 
+            logger.error(f"关键词搜索失败: {e}")
+            return [] 

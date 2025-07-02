@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from pydantic import BaseModel, Field
+import json
+import asyncio
 
 from ..services.ai_service_langchain import AIService
 from ..services.file_service import FileService
@@ -33,6 +36,178 @@ class ContentAnalysisRequest(BaseModel):
 class RelatedQuestionsRequest(BaseModel):
     content: str
     num_questions: int = 3
+
+class ChatRequest(BaseModel):
+    question: str
+    max_context_length: int = 3000
+    search_limit: int = 5
+
+# OpenAI兼容格式
+class Message(BaseModel):
+    """聊天消息模型"""
+    role: str
+    content: str
+
+class OpenAIChatRequest(BaseModel):
+    """OpenAI兼容的聊天请求模型"""
+    model: Optional[str] = None  # 模型名称变为可选参数
+    messages: List[Message]
+    stream: bool = False
+    max_context_length: int = 3000
+    search_limit: int = 5
+    
+class OpenAIChatResponse(BaseModel):
+    """OpenAI兼容的聊天响应模型"""
+    model: str  # 返回实际使用的模型名称
+    choices: List[Dict]
+
+async def stream_chat_response(ai_service: AIService, question: str, max_context_length: int = 3000, search_limit: int = 5) -> AsyncGenerator:
+    """处理真正的流式响应
+    
+    Args:
+        ai_service: AI服务实例
+        question: 用户问题
+        max_context_length: 最大上下文长度
+        search_limit: 搜索结果限制
+    """
+    try:
+        logger.info(f"开始流式处理问题: {question}")
+        
+        # 使用真正的流式RAG问答
+        async for stream_data in ai_service.streaming_chat_with_context(
+            question=question,
+            max_context_length=max_context_length,
+            search_limit=search_limit
+        ):
+            # 检查是否有错误
+            if "error" in stream_data:
+                error_data = {
+                    "error": {
+                        "message": stream_data["error"]
+                    }
+                }
+                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+                continue
+            
+            # 检查是否是内容块
+            if "chunk" in stream_data:
+                # 构造与OpenAI兼容的响应格式
+                response_data = {
+                    "choices": [{
+                        "delta": {"content": stream_data["chunk"]},
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
+            
+            # 检查是否是结束信号
+            elif "finished" in stream_data:
+                # 发送结束信号和元数据
+                final_data = {
+                    "choices": [{
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }],
+                    "metadata": {
+                        "related_documents": stream_data.get("related_documents", []),
+                        "processing_time": stream_data.get("processing_time", 0),
+                        "search_query": stream_data.get("search_query", ""),
+                        "context_length": stream_data.get("context_length", 0)
+                    }
+                }
+                yield f"data: {json.dumps(final_data, ensure_ascii=False)}\n\n"
+                
+    except Exception as e:
+        logger.error(f"处理流式响应时出错: {str(e)}")
+        import traceback
+        logger.error(f"详细错误信息: {traceback.format_exc()}")
+        
+        error_data = {
+            "error": {
+                "message": str(e)
+            }
+        }
+        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+    
+    # 发送结束标记
+    yield "data: [DONE]\n\n"
+
+@router.post("/chat/completions")
+async def chat_completions(request: OpenAIChatRequest, db: Session = Depends(get_db)):
+    """OpenAI兼容的聊天完成接口
+    
+    Args:
+        request: 聊天请求
+        
+    Returns:
+        聊天响应或流式响应
+    """
+    ai_service = AIService(db)
+    
+    if not ai_service.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI服务不可用，请检查配置"
+        )
+    
+    try:
+        # 获取最后一条用户消息
+        if not request.messages or request.messages[-1].role != "user":
+            raise HTTPException(
+                status_code=400,
+                detail="无效的消息格式"
+            )
+            
+        question = request.messages[-1].content
+        
+        if not question.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="问题不能为空"
+            )
+        
+        logger.info(f"处理OpenAI格式问题: {question}")
+        
+        if request.stream:
+            # 返回流式响应
+            return StreamingResponse(
+                stream_chat_response(ai_service, question, request.max_context_length, request.search_limit),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                }
+            )
+        
+        # 非流式响应
+        result = ai_service.chat_with_context(
+            question=question,
+            max_context_length=request.max_context_length,
+            search_limit=request.search_limit
+        )
+        
+        logger.info(f"生成回答: {result.get('answer', '')[:100]}...")
+            
+        # 返回完整响应，使用配置中的默认模型名称
+        return OpenAIChatResponse(
+            model=settings.openai_model,  # 使用配置中的模型名称
+            choices=[{
+                "message": {
+                    "role": "assistant",
+                    "content": result.get("answer", "")
+                },
+                "finish_reason": "stop"
+            }]
+        )
+        
+    except Exception as e:
+        logger.error(f"处理OpenAI格式请求失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"处理请求失败: {str(e)}"
+        )
 
 @router.post("/ai/summary")
 def generate_summary_api(request: SummaryRequest, db: Session = Depends(get_db)):
@@ -148,6 +323,39 @@ def generate_related_questions_api(request: RelatedQuestionsRequest, db: Session
     questions = ai_service.generate_related_questions(request.content, request.num_questions)
     
     return {"questions": questions}
+
+@router.post("/ai/chat")
+def chat_api(request: ChatRequest, db: Session = Depends(get_db)):
+    """AI智能问答 - 基于RAG的聊天功能"""
+    ai_service = AIService(db)
+    
+    if not ai_service.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI服务不可用，请检查配置"
+        )
+    
+    if not request.question.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="问题不能为空"
+        )
+    
+    try:
+        result = ai_service.chat_with_context(
+            question=request.question,
+            max_context_length=request.max_context_length,
+            search_limit=request.search_limit
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"聊天API调用失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="智能问答处理失败"
+        )
 
 @router.post("/ai/discover-links/{file_id}")
 def discover_smart_links_api(file_id: int, db: Session = Depends(get_db)):

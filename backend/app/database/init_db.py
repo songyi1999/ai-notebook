@@ -64,44 +64,7 @@ def init_db():
         Base.metadata.create_all(bind=engine)
         logger.info("已创建所有标准数据库表。")
 
-        # 3. 创建FTS5虚拟表和触发器
-        with engine.connect() as connection:
-            # 创建FTS5虚拟表（使用更好的中文支持）
-            connection.execute(text("""
-                CREATE VIRTUAL TABLE files_fts USING fts5(
-                    title, 
-                    content,
-                    tokenize='unicode61 remove_diacritics 0'
-                );
-            """))
-            logger.info("已创建 files_fts 全文搜索虚拟表。")
 
-            # 创建插入触发器
-            connection.execute(text("""
-                CREATE TRIGGER files_ai AFTER INSERT ON files BEGIN
-                    INSERT INTO files_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
-                END;
-            """))
-            logger.info("已创建 files_ai 插入触发器。")
-            
-            # 创建更新触发器
-            connection.execute(text("""
-                CREATE TRIGGER files_au AFTER UPDATE ON files BEGIN
-                    INSERT INTO files_fts(files_fts, rowid, title, content) VALUES ('delete', old.id, old.title, old.content);
-                    INSERT INTO files_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
-                END;
-            """))
-            logger.info("已创建 files_au 更新触发器。")
-
-            # 创建删除触发器
-            connection.execute(text("""
-                CREATE TRIGGER files_ad AFTER DELETE ON files BEGIN
-                    INSERT INTO files_fts(files_fts, rowid, title, content) VALUES ('delete', old.id, old.title, old.content);
-                END;
-            """))
-            logger.info("已创建 files_ad 删除触发器。")
-            
-            connection.commit()
         
         # 4. ChromaDB将由LangChain-Chroma自动管理
         logger.info("ChromaDB将由LangChain-Chroma自动管理")

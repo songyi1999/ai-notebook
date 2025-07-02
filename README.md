@@ -9,6 +9,7 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 - 🔒 **纯本地运行**：所有数据存储在本地，确保隐私安全
 - 📝 **Markdown格式**：使用标准Markdown格式，数据可移植性强
 - 🤖 **AI智能问答**：基于本地LLM的RAG问答系统
+- 💬 **智能对话**：AI助手基于笔记内容回答问题，支持上下文理解
 - 🐳 **容器化部署**：一键启动，简化安装和运行
 - 🕸️ **链接可视化**：双向链接网络图谱和关系展示
 - 🔗 **双向链接**：支持笔记间的双向链接和关系可视化
@@ -17,6 +18,16 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 - ✨ **自动保存**：实时自动保存编辑内容，支持Ctrl+S快捷键
 
 ### 最新功能更新
+
+#### 🤖 AI智能问答系统 (2025-01-01)
+- **RAG问答功能**：基于检索增强生成(RAG)的智能问答，AI会先搜索相关笔记，再基于内容回答问题
+- **上下文理解**：AI助手能理解问题并从笔记库中检索最相关的内容作为回答依据
+- **相关文档展示**：回答时会显示引用的相关笔记，支持点击直接跳转查看
+- **智能对话界面**：现代化的聊天界面，支持多轮对话和历史记录
+- **快捷键支持**：Ctrl+/ 快速打开AI助手，ESC关闭对话窗口
+- **性能优化**：基于LangChain实现，支持长文本处理和智能分块
+- **错误处理**：完善的错误处理机制，AI服务不可用时优雅降级
+- **询问按钮**：在搜索按钮前添加"询问"按钮，方便快速访问AI助手
 
 #### ⚡ ChromaDB向量优化架构 (2025-01-01)
 - **双存储架构**：SQLite存储元数据，ChromaDB专门存储向量数据，实现最佳性能
@@ -70,15 +81,15 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 - **启动流程**：
   1. 清理现有SQLite数据库文件
   2. 清理现有向量数据库目录  
-  3. 重新创建数据库表结构和FTS索引
+  3. 重新创建数据库表结构
   4. 扫描notes目录中的所有文件
-  5. 重建SQLite索引和FTS全文搜索
+  5. 重建SQLite索引
   6. 重建向量索引和嵌入
 - **启动日志**：详细的启动进度日志，方便监控重建过程
 
 #### 智能搜索功能
 - **多种搜索模式**：关键词搜索、语义搜索、混合搜索三种模式
-- **关键词搜索**：基于SQLite FTS5全文搜索，返回所有匹配文件
+- **关键词搜索**：基于SQLite LIKE模糊搜索，返回所有匹配文件
 - **语义搜索**：基于向量相似度，返回前10个最相关文件，显示相似度评分
 - **混合搜索**：结合关键词和语义搜索结果，智能去重排序
 - **搜索历史**：记录所有搜索查询，支持快速重新搜索
@@ -128,6 +139,51 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 - **数据库**：SQLite + ChromaDB
 - **AI集成**：标准 `/v1/embeddings` 接口，支持Ollama、OpenAI等多种AI服务
 - **部署**：Docker + Docker Compose
+
+## 🚀 性能优化
+
+### 语义检索性能优化
+我们对语义检索进行了全面的性能优化，显著提升了搜索速度：
+
+#### 优化措施
+1. **HTTP超时优化**：从30秒降低到10秒，减少不必要等待
+2. **配置参数优化**：
+   - 嵌入维度：从1536调整为1024（匹配BGE模型实际维度）
+   - 语义搜索阈值：保持1.0（距离阈值，越小越严格）
+3. **查询向量缓存**：实现LRU缓存机制，避免重复计算
+4. **性能监控**：添加详细的性能日志，便于问题诊断
+
+#### 性能提升效果
+- **搜索速度提升**：约19%的性能提升（从1357ms降至1101ms）
+- **缓存机制**：相同查询可复用向量，减少计算开销
+- **监控完善**：详细的耗时统计，便于性能调优
+
+#### 技术细节
+- **嵌入模型**：BGE-large-zh-v1.5（1024维中文嵌入）
+- **向量数据库**：ChromaDB with LangChain集成
+- **缓存策略**：MD5哈希键 + LRU淘汰策略
+- **超时控制**：10秒HTTP请求超时
+
+#### 搜索性能对比
+| 优化项目 | 优化前 | 优化后 | 提升 |
+|---------|--------|--------|------|
+| 搜索耗时 | 1357ms | 1101ms | 19% ↑ |
+| HTTP超时 | 30s | 10s | 67% ↓ |
+| 嵌入维度 | 1536 | 1024 | 匹配模型 |
+| 搜索阈值 | 1.0 | 1.0 | 距离阈值 |
+
+#### 性能瓶颈分析
+语义检索的主要性能瓶颈包括：
+1. **嵌入模型推理**：每次搜索都需要调用AI模型生成查询向量
+2. **网络延迟**：Docker容器访问宿主机Ollama服务的网络开销
+3. **向量计算**：ChromaDB进行相似度计算的时间
+4. **数据库查询**：验证搜索结果文件存在性的SQL查询
+
+#### 未来优化方向
+1. **更快的嵌入模型**：考虑使用更轻量级的中文嵌入模型
+2. **本地嵌入服务**：将嵌入模型集成到后端服务中，减少网络调用
+3. **结果缓存**：缓存搜索结果，避免重复的向量计算
+4. **批量查询优化**：优化数据库查询，减少SQL调用次数
 
 ## 系统架构图
 
@@ -591,6 +647,7 @@ uvicorn main:app --reload
 | `suggest_tags_api()` | `request: TagSuggestionRequest{title: str, content: str, max_tags: int=5}` | `Dict{"tags": List[str]}` | 基于内容智能推荐标签 |
 | `create_embeddings_api()` | `file_id: int` | `Dict{"success": bool, "message": str}` | 为指定文件创建向量嵌入 |
 | `semantic_search_api()` | `request: SemanticSearchRequest{query: str, limit: int=10, similarity_threshold: float=0.7}` | `Dict{"results": List}` | 基于向量相似度进行语义搜索 |
+| `chat_api()` | `request: ChatRequest{question: str, max_context_length: int=3000, search_limit: int=5}` | `Dict{"answer": str, "related_documents": List, "search_query": str, "processing_time": float}` | AI智能问答，基于RAG技术回答用户问题 |
 | `analyze_content_api()` | `request: ContentAnalysisRequest{content: str}` | `Dict{"analysis": Any}` | 分析文档内容特征 |
 | `generate_related_questions_api()` | `request: RelatedQuestionsRequest{content: str, num_questions: int=3}` | `Dict{"questions": List[str]}` | 基于内容生成相关思考问题 |
 | `discover_smart_links_api()` | `file_id: int` | `Dict{"suggestions": List[SmartLinkSuggestion]}` | 智能发现文章间的链接关系 |
@@ -642,9 +699,7 @@ uvicorn main:app --reload
 | `update_file()` | `file_id: int, file_update: FileUpdate, fast_mode: bool=False` | `Optional[File]` | 更新文件（支持快速模式，快速模式时后台异步处理索引） |
 | `delete_file()` | `file_id: int` | `Optional[File]` | 软删除文件 |
 | `hard_delete_file()` | `file_id: int` | `Optional[File]` | 硬删除文件 |
-| `search_files_fts()` | `query_str: str, limit: int=50` | `List[File]` | FTS全文搜索 |
-| `search_files_fallback()` | `query_str: str, limit: int=50` | `List[File]` | 后备搜索方法 |
-| `search_files()` | `query_str: str, skip: int=0, limit: int=100` | `List[File]` | 统一搜索接口 |
+| `search_files()` | `query_str: str, skip: int=0, limit: int=100` | `List[File]` | LIKE模糊搜索，用于关键词搜索 |
 
 #### AI服务 (backend/app/services/ai_service.py)
 
@@ -655,6 +710,7 @@ uvicorn main:app --reload
 | `suggest_tags()` | `title: str, content: str, max_tags: int=5` | `List[str]` | 智能标签建议 |
 | `create_embeddings()` | `file: File` | `bool` | 为文件创建向量嵌入 |
 | `semantic_search()` | `query: str, limit: int=10, similarity_threshold: float=0.7` | `List[Dict[str, Any]]` | 语义搜索 |
+| `chat_with_context()` | `question: str, max_context_length: int=3000, search_limit: int=5` | `Dict[str, Any]` | 基于RAG的智能问答，先搜索相关文档再生成回答 |
 | `clear_vector_database()` | 无 | `bool` | 清空向量数据库 |
 | `add_document_to_vector_db()` | `file_id: int, title: str, content: str, metadata: Dict=None` | `bool` | 添加文档到向量数据库 |
 | `analyze_content()` | `content: str` | `Dict[str, Any]` | 内容分析 |
@@ -744,8 +800,7 @@ uvicorn main:app --reload
 | `getFileTree()` | `rootPath: string="notes"` | `Promise<FileTreeNode[]>` | 获取文件树 |
 | `createDirectory()` | `dirPath: string` | `Promise<{success: boolean, message: string}>` | 创建目录 |
 | `moveFile()` | `sourcePath: string, destinationPath: string` | `Promise<{success: boolean, message: string}>` | 移动文件或目录 |
-| `search()` | `query: string, searchType: string="mixed", limit: number=50, similarityThreshold: number=0.7` | `Promise<SearchResponse>` | 新版搜索接口 |
-| `searchFiles()` | `query: string, searchType: string="mixed"` | `Promise<FileData[]>` | 旧版搜索接口（兼容性） |
+| `search()` | `query: string, searchType: string="mixed", limit: number=50, similarityThreshold: number=0.7` | `Promise<SearchResponse>` | 统一搜索接口，支持关键词、语义和混合搜索 |
 | `getSearchHistory()` | `limit: number=20` | `Promise<SearchHistory[]>` | 获取搜索历史 |
 | `getPopularQueries()` | `limit: number=10` | `Promise<PopularQuery[]>` | 获取热门查询 |
 | `getTags()` | `skip: number=0, limit: number=100` | `Promise<TagData[]>` | 获取标签列表 |
@@ -766,6 +821,7 @@ uvicorn main:app --reload
 | `discoverSmartLinks()` | `fileId: number` | `Promise<SmartLinkSuggestion[]>` | 智能发现文章间的链接关系 |
 | `getAIStatus()` | 无 | `Promise<{available: boolean, openai_configured: boolean, base_url: string}>` | 获取AI服务状态 |
 | `healthCheck()` | 无 | `Promise<{status: string, service: string}>` | 健康检查 |
+| `chat()` | `request: ChatRequest{question: string, max_context_length?: number, search_limit?: number}` | `Promise<ChatResponse>` | AI智能问答，基于RAG技术回答问题并返回相关文档 |
 
 ### 前端组件
 
@@ -849,33 +905,87 @@ uvicorn main:app --reload
 |--------|----------|----------|----------|
 | `ResizableSider` | `children: React.ReactNode, defaultWidth: number=300, minWidth: number=200, maxWidth: number=600` | `React.FC` | 可调整大小的侧边栏组件 |
 
+#### AI聊天模态框组件 (frontend/src/components/ChatModal.tsx)
+
+| 函数名 | 传入参数 | 传出参数 | 功能说明 |
+|--------|----------|----------|----------|
+| `ChatModal` | `visible: boolean, onClose: () => void, onSelectFile: (filePath: string, fileName: string) => void` | `React.FC` | AI智能问答聊天界面主组件 |
+| `handleSendMessage()` | 无 | `Promise<void>` | 发送用户问题并获取AI回答 |
+| `handleDocumentClick()` | `doc: ChatResponse['related_documents'][0]` | `void` | 点击相关文档跳转到对应文件 |
+| `handleClearChat()` | 无 | `void` | 清空对话历史 |
+| `formatTime()` | `date: Date` | `string` | 格式化消息时间显示 |
+| `formatSimilarity()` | `similarity: number` | `string` | 格式化相似度百分比显示 |
+
+**特性**：
+- **RAG问答**：基于检索增强生成技术，先搜索相关笔记，再生成回答
+- **智能对话**：支持多轮对话，保持上下文理解
+- **相关文档展示**：显示回答引用的相关笔记，支持点击跳转
+- **现代化界面**：仿微信聊天界面，用户体验友好
+- **快捷键支持**：Enter发送消息，Shift+Enter换行
+- **性能统计**：显示处理时间和相关文档数量
+- **错误处理**：AI服务不可用时显示友好错误信息
+- **自动滚动**：新消息自动滚动到底部
+
 ## 变量说明
 
 ### 环境变量
 
 #### 应用配置
-- `APP_HOST` - 应用主机地址，默认：`localhost`
-- `APP_PORT` - 应用端口，默认：`8000`
-- `APP_DEBUG` - 调试模式，默认：`false`
-- `APP_SECRET_KEY` - 应用密钥，用于加密
+- `APP_NAME` - 应用名称，默认：`AI笔记本`
+- `APP_VERSION` - 应用版本，默认：`1.0.0`
+- `DEBUG_MODE` - 调试模式，默认：`false`
+- `SERVER_HOST` - 服务器主机地址，默认：`0.0.0.0`
+- `SERVER_PORT` - 服务器端口，默认：`8000`
 
 #### 数据库配置
 - `DATABASE_URL` - 数据库连接URL，默认：`sqlite:///./data/ai_notebook.db`
-- `DATA_DIRECTORY` - 数据存储根目录，默认：`./data`
 - `CHROMA_DB_PATH` - ChromaDB向量数据库路径，默认：`./data/chroma_db`
 
 #### AI模型配置
-- `OPENAI_API_KEY` - OpenAI API密钥，用于AI功能
-- `OPENAI_BASE_URL` - OpenAI API基础URL，支持本地或第三方兼容服务
-- `OPENAI_MODEL` - 使用的模型名称，默认：`gpt-3.5-turbo`
+- `OPENAI_API_KEY` - OpenAI API密钥，设置为`ollama`表示使用本地Ollama服务
+- `OPENAI_BASE_URL` - OpenAI API基础URL，默认：`http://host.docker.internal:11434`（Docker容器访问宿主机Ollama服务）
+- `EMBEDDING_MODEL_NAME` - 嵌入模型名称，默认：`quentinz/bge-large-zh-v1.5:latest`（BGE中文嵌入模型）
+- `OPENAI_MODEL` - LLM模型名称，默认：`qwen2.5:0.5b`
+- `LLM_TEMPERATURE` - 生成温度，默认：`0.7`
+- `LLM_MAX_TOKENS` - 最大生成token数，默认：`2048`
 
 #### 文件存储配置
-- `NOTES_DIRECTORY` - 笔记文件存储目录，默认：`../notes`（相对于backend目录）
-- `MAX_FILE_SIZE` - 最大文件大小，默认：`10MB`
+- `MAX_FILE_SIZE` - 最大文件大小（字节），默认：`10485760`（10MB）
 
 #### 搜索配置
-- `SEARCH_LIMIT` - 默认搜索结果数量，默认：`50`
-- `EMBEDDING_DIMENSION` - 向量维度，默认：`1536`（OpenAI text-embedding-ada-002）
+- `SEARCH_CHUNK_SIZE` - 文本分块大小，默认：`1000`
+- `SEARCH_OVERLAP` - 分块重叠大小，默认：`200`
+
+#### ⚠️ 重要配置参数（在docker-compose.yml中配置）
+
+##### 语义搜索核心参数
+- **`EMBEDDING_DIMENSION`** - 向量维度，**必须与嵌入模型匹配**
+  - BGE-large-zh-v1.5模型：`1024`维
+  - OpenAI text-embedding-ada-002模型：`1536`维
+  - **当前配置**：`1024`（匹配BGE模型）
+  
+- **`SEMANTIC_SEARCH_THRESHOLD`** - 语义搜索距离阈值
+  - **含义**：向量间的距离值，**数值越小表示越相似**
+  - **范围**：通常在0.0-2.0之间
+  - **推荐值**：
+    - `0.5`：非常严格，只返回高度相关的结果
+    - `0.8`：中等严格，平衡相关性和召回率
+    - `1.0`：较宽松，返回更多可能相关的结果
+    - `1.2`：很宽松，可能包含弱相关结果
+  - **当前配置**：`1.0`
+  - **调优建议**：根据搜索效果调整，相关结果太少可增大阈值，结果不够精准可减小阈值
+
+##### 配置修改方法
+要修改这些参数，请编辑 `docker-compose.yml` 文件中的环境变量：
+```yaml
+environment:
+  - EMBEDDING_DIMENSION=1024  # 向量维度
+  - SEMANTIC_SEARCH_THRESHOLD=1.0  # 距离阈值
+```
+修改后需要重启容器：
+```bash
+docker-compose down && docker-compose up -d --build
+```
 
 ### 全局常量
 
@@ -905,7 +1015,7 @@ uvicorn main:app --reload
 |--------|------|------|
 | `id` | `Integer` | 主键，自增ID |
 | `file_id` | `Integer` | 关联的文件ID，外键关联files表 |
-| `task_type` | `String(50)` | 任务类型：'vector_index'（向量索引）、'fts_index'（全文索引） |
+| `task_type` | `String(50)` | 任务类型：'vector_index'（向量索引） |
 | `status` | `String(20)` | 任务状态：'pending'（待处理）、'processing'（处理中）、'completed'（已完成）、'failed'（失败） |
 | `priority` | `Integer` | 任务优先级，数字越小优先级越高，默认为1 |
 | `retry_count` | `Integer` | 重试次数，默认为0，最大重试3次 |

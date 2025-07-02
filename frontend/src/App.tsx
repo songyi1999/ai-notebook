@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Layout, Button, Space, Tooltip } from 'antd';
-import { SearchOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import { SearchOutlined, MenuFoldOutlined, MenuUnfoldOutlined, RobotOutlined } from '@ant-design/icons';
 import NoteEditor from './components/NoteEditor';
 import FileTree from './components/FileTree';
 import ResizableSider from './components/ResizableSider';
 import SearchModal from './components/SearchModal';
+import ChatModal from './components/ChatModal';
 import './App.css';
 
 const { Header, Content } = Layout;
@@ -17,6 +18,7 @@ const App: React.FC = () => {
     name: string;
   } | null>(null);
   const [searchModalVisible, setSearchModalVisible] = useState(false);
+  const [chatModalVisible, setChatModalVisible] = useState(false);
 
   const handleFileSelect = (filePath: string, fileName: string) => {
     setCurrentFile({ path: filePath, name: fileName });
@@ -28,6 +30,14 @@ const App: React.FC = () => {
 
   const handleSearchModalClose = () => {
     setSearchModalVisible(false);
+  };
+
+  const handleChatModalOpen = () => {
+    setChatModalVisible(true);
+  };
+
+  const handleChatModalClose = () => {
+    setChatModalVisible(false);
   };
 
   const toggleSider = () => {
@@ -42,9 +52,18 @@ const App: React.FC = () => {
         event.preventDefault();
         handleSearchModalOpen();
       }
-      // ESC 关闭搜索
-      if (event.key === 'Escape' && searchModalVisible) {
-        handleSearchModalClose();
+      // Ctrl+/ 打开AI助手
+      if (event.ctrlKey && event.key === '/') {
+        event.preventDefault();
+        handleChatModalOpen();
+      }
+      // ESC 关闭搜索或聊天
+      if (event.key === 'Escape') {
+        if (searchModalVisible) {
+          handleSearchModalClose();
+        } else if (chatModalVisible) {
+          handleChatModalClose();
+        }
       }
       // Ctrl+B 切换侧边栏
       if (event.ctrlKey && event.key === 'b') {
@@ -57,7 +76,7 @@ const App: React.FC = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [searchModalVisible]);
+  }, [searchModalVisible, chatModalVisible]);
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
@@ -87,6 +106,16 @@ const App: React.FC = () => {
           </div>
         </div>
         <Space>
+          <Tooltip title="AI智能问答 (Ctrl+/)">
+            <Button 
+              type="default" 
+              icon={<RobotOutlined />} 
+              onClick={handleChatModalOpen}
+              style={{ borderRadius: '6px' }}
+            >
+              询问
+            </Button>
+          </Tooltip>
           <Tooltip title="智能搜索 (Ctrl+K)">
             <Button 
               type="primary" 
@@ -144,6 +173,13 @@ const App: React.FC = () => {
       <SearchModal
         visible={searchModalVisible}
         onClose={handleSearchModalClose}
+        onSelectFile={handleFileSelect}
+      />
+
+      {/* AI聊天模态窗口 */}
+      <ChatModal
+        visible={chatModalVisible}
+        onClose={handleChatModalClose}
         onSelectFile={handleFileSelect}
       />
     </Layout>

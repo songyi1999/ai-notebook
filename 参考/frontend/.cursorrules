@@ -1,0 +1,50 @@
+# 项目说明
+
+## 功能特性
+- 基于 Vue 3 + Vite 构建的前端项目
+- 支持与 OpenAI 兼容的 API 接口交互
+- 实现实时对话功能
+- 支持流式响应(SSE)
+- 支持语音输入转写
+- 支持 Markdown 渲染
+- 支持文件预览
+- 支持预设问题快速回答
+- 移动端自适应
+
+## 技术栈
+- 前端框架: Vue 3
+- 构建工具: Vite
+- 状态管理: Pinia
+- UI组件: Vant
+- Markdown: markdown-it
+- 容器化: Docker + Nginx
+
+## 部署架构
+- 前端: Nginx 静态服务
+- API代理: Nginx 反向代理
+- 认证: Bearer Token 方式
+- 通信: SSE + WebSocket
+
+## Lessons
+1. Nginx环境变量处理:
+   - 需要使用 envsubst 处理模板
+   - 配置文件需要使用 .template 后缀
+   - 环境变量在 docker-entrypoint.sh 中替换
+
+2. API认证处理:
+   - 统一在 Nginx 层添加 Authorization 头
+   - 避免在前端暴露 API Key
+   - 使用环境变量传递敏感信息
+
+3. 开发环境配置:
+   - isDev 根据 NODE_ENV 判断
+   - 开发环境直连API服务
+   - 生产环境通过 Nginx 代理
+
+## Scratchpad
+[ ] 当前任务进度
+- [X] 基础项目搭建
+- [X] Docker 配置完成
+- [X] Nginx 配置优化
+- [X] API 认证集成
+- [ ] 文档完善 

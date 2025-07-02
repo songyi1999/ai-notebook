@@ -81,7 +81,7 @@ class SearchService:
     def _keyword_search(self, query: str, limit: int) -> List[Dict[str, Any]]:
         """关键词搜索 - 返回所有匹配的文件"""
         try:
-            files = self.file_service.search_files_fts(query, limit)
+            files = self.file_service.search_files(query, limit=limit)
             return [self._file_to_dict(file, "keyword") for file in files]
         except Exception as e:
             logger.error(f"关键词搜索失败: {e}")
@@ -166,6 +166,14 @@ class SearchService:
         """将File对象转换为字典格式"""
         content_preview = file.content[:200] + "..." if len(file.content) > 200 else file.content
         
+        # 安全地处理datetime字段
+        def safe_datetime_to_iso(dt_field):
+            if dt_field is None:
+                return None
+            if hasattr(dt_field, 'isoformat'):
+                return dt_field.isoformat()
+            return str(dt_field)  # 如果已经是字符串，直接返回
+        
         return {
             "file_id": file.id,
             "file_path": file.file_path,
@@ -173,8 +181,8 @@ class SearchService:
             "content_preview": content_preview,
             "search_type": search_type,
             "file_size": file.file_size,
-            "created_at": file.created_at.isoformat() if file.created_at else None,
-            "updated_at": file.updated_at.isoformat() if file.updated_at else None,
+            "created_at": safe_datetime_to_iso(file.created_at),
+            "updated_at": safe_datetime_to_iso(file.updated_at),
             "tags": file.tags
         }
     

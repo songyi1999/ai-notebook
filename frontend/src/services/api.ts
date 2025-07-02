@@ -101,9 +101,32 @@ export interface LinkData {
 // 智能链接建议接口
 export interface SmartLinkSuggestion {
     target_file_id: number;
+    target_file_path: string;
+    target_title: string;
     link_type: string;
-    reason: string;
-    suggested_text?: string;
+    description: string;
+    similarity: number;
+}
+
+export interface ChatRequest {
+    question: string;
+    max_context_length?: number;
+    search_limit?: number;
+}
+
+export interface ChatResponse {
+    answer: string;
+    related_documents: Array<{
+        file_id: number;
+        file_path: string;
+        title: string;
+        similarity: number;
+        chunk_text: string;
+    }>;
+    search_query: string;
+    context_length?: number;
+    processing_time?: number;
+    error?: string;
 }
 
 // API客户端类
@@ -235,24 +258,6 @@ export class ApiClient {
         return this.request<SearchResponse>(`/files/search?${params}`);
     }
 
-    // 保持旧接口兼容性
-    async searchFiles(query: string, searchType: 'keyword' | 'semantic' | 'mixed' = 'mixed'): Promise<FileData[]> {
-        const response = await this.search(query, searchType);
-        // 将新格式转换为旧格式以保持兼容性
-        return response.results.map(result => ({
-            id: result.file_id,
-            file_path: result.file_path,
-            title: result.title,
-            content: result.content_preview,
-            file_size: result.file_size,
-            created_at: result.created_at,
-            updated_at: result.updated_at,
-            tags: result.tags,
-            is_deleted: false,
-            parent_folder: '',
-        }));
-    }
-
     // 获取搜索历史
     async getSearchHistory(limit: number = 20): Promise<SearchHistory[]> {
         const response = await this.request<{ history: SearchHistory[] }>(`/files/search/history?limit=${limit}`);
@@ -379,6 +384,24 @@ export class ApiClient {
             method: 'POST',
         });
     }
+
+    // AI服务相关接口
+    async chat(request: ChatRequest): Promise<ChatResponse> {
+        const response = await fetch(`${this.baseUrl}/ai/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(request),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || '智能问答请求失败');
+        }
+
+        return response.json();
+    }
 }
 
 // 创建默认API客户端实例
@@ -395,7 +418,7 @@ export const deleteFile = (...args: Parameters<ApiClient['deleteFile']>) => apiC
 export const getFileTree = (...args: Parameters<ApiClient['getFileTree']>) => apiClient.getFileTree(...args);
 export const createDirectory = (...args: Parameters<ApiClient['createDirectory']>) => apiClient.createDirectory(...args);
 export const search = (...args: Parameters<ApiClient['search']>) => apiClient.search(...args);
-export const searchFiles = (...args: Parameters<ApiClient['searchFiles']>) => apiClient.searchFiles(...args);
+
 export const getSearchHistory = (...args: Parameters<ApiClient['getSearchHistory']>) => apiClient.getSearchHistory(...args);
 export const getPopularQueries = (...args: Parameters<ApiClient['getPopularQueries']>) => apiClient.getPopularQueries(...args);
 export const moveFile = (...args: Parameters<ApiClient['moveFile']>) => apiClient.moveFile(...args);
@@ -429,4 +452,5 @@ export const discoverSmartLinks = (...args: Parameters<ApiClient['discoverSmartL
 export const getAIStatus = (...args: Parameters<ApiClient['getAIStatus']>) => apiClient.getAIStatus(...args);
 export const healthCheck = (...args: Parameters<ApiClient['healthCheck']>) => apiClient.healthCheck(...args);
 export const deleteFileByPath = (...args: Parameters<ApiClient['deleteFileByPath']>) => apiClient.deleteFileByPath(...args);
-export const rebuildIndex = (...args: Parameters<ApiClient['rebuildIndex']>) => apiClient.rebuildIndex(...args); 
+export const rebuildIndex = (...args: Parameters<ApiClient['rebuildIndex']>) => apiClient.rebuildIndex(...args);
+export const chat = (...args: Parameters<ApiClient['chat']>) => apiClient.chat(...args); 

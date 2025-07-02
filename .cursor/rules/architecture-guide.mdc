@@ -30,15 +30,15 @@ alwaysApply: false
 **替代方案**：Python内存缓存和LRU缓存
 
 ### 搜索引擎方案
-**决策**：使用SQLite FTS5 + ChromaDB混合搜索
+**决策**：使用SQLite LIKE模糊搜索 + ChromaDB混合搜索
 **原因**：
-- SQLite FTS5：轻量级全文搜索，无需额外服务
+- SQLite LIKE：简单可靠的模糊搜索，中文支持好
 - ChromaDB：向量搜索，支持语义检索
 - 混合搜索：结合关键词和语义搜索的优势
 
 **实现**：
-- 创建files_fts虚拟表和自动更新触发器
-- 实现混合搜索（FTS5关键词搜索 + ChromaDB语义搜索）
+- 使用LIKE操作符进行关键词模糊匹配
+- 实现混合搜索（关键词模糊搜索 + ChromaDB语义搜索）
 
 ### AI模型管理
 **决策**：通过OpenAI兼容接口连接外部Ollama服务
@@ -67,7 +67,7 @@ alwaysApply: false
 3. **embeddings** - 向量嵌入
 4. **tags** - 智能标签
 5. **file_tags** - 文件标签关联
-6. **files_fts** - FTS5全文搜索虚拟表
+6. **搜索功能** - 基于LIKE操作符的关键词搜索
 7. **search_history** - 搜索历史
 8. **chat_sessions** - AI对话会话
 9. **chat_messages** - AI对话消息
@@ -77,7 +77,7 @@ alwaysApply: false
 
 ### 同步保存
 - 立即更新.md文件和SQLite
-- FTS5索引通过触发器自动更新
+- 关键词搜索使用LIKE操作符，简单可靠
 - 立即响应用户操作
 
 ### 异步索引
@@ -88,9 +88,9 @@ alwaysApply: false
 ## 混合搜索实现
 
 ### 关键词搜索
-- 使用SQLite FTS5
-- 支持全文搜索和高级查询语法
-- 自动高亮搜索结果
+- 使用SQLite LIKE操作符
+- 支持模糊匹配，中文友好
+- 简单可靠，无分词问题
 
 ### 语义搜索
 - 使用ChromaDB向量相似度搜索
