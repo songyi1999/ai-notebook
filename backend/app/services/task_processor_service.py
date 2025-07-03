@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, text
 from pathlib import Path
 
 from ..models.pending_task import PendingTask
@@ -14,6 +14,13 @@ from .ai_service_langchain import AIService
 from .index_service import IndexService
 
 logger = logging.getLogger(__name__)
+
+# 添加任务统计缓存
+_task_stats_cache = {
+    "data": None,
+    "last_update": None,
+    "cache_duration": 15  # 缓存15秒
+}
 
 class TaskProcessorService:
     """后台任务处理服务"""
@@ -305,7 +312,6 @@ class TaskProcessorService:
         """
         try:
             # 查找重复任务组
-            from sqlalchemy import text
             duplicate_groups = self.db.execute(text("""
                 SELECT file_id, task_type, COUNT(*) as count
                 FROM pending_tasks 
@@ -357,7 +363,10 @@ class TaskProcessorService:
     def get_task_statistics(self) -> Dict[str, Any]:
         """获取任务队列统计信息"""
         try:
-            from sqlalchemy import text
+            # 检查缓存是否过期
+            if _task_stats_cache["data"] and datetime.now() - _task_stats_cache["last_update"] < timedelta(seconds=_task_stats_cache["cache_duration"]):
+                return _task_stats_cache["data"]
+            
             stats = {}
             
             # 按状态统计
@@ -390,6 +399,10 @@ class TaskProcessorService:
             
             stats['duplicates'] = len(duplicate_stats)
             stats['total_duplicate_tasks'] = sum(row.count - 1 for row in duplicate_stats)
+            
+            # 更新缓存
+            _task_stats_cache["data"] = stats
+            _task_stats_cache["last_update"] = datetime.now()
             
             return stats
             

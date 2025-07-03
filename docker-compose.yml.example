@@ -1,0 +1,54 @@
+version: '3.8'
+
+name: ai-notebook
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - ai-notebook-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=AI笔记本
+      - APP_VERSION=1.0.0
+      - DEBUG_MODE=false
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8000
+      - DATABASE_URL=sqlite:///./data/ai_notebook.db
+      - CHROMA_DB_PATH=./data/chroma_db
+      - OPENAI_API_KEY=ollama
+      - OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+      - EMBEDDING_MODEL_NAME=quentinz/bge-large-zh-v1.5:latest 
+      - EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
+      - EMBEDDING_API_KEY=ollama
+      - OPENAI_MODEL=qwen2.5:0.5b
+      - LLM_TEMPERATURE=0.7
+      - LLM_MAX_TOKENS=2048
+      - EMBEDDING_DIMENSION=1024
+      - MAX_FILE_SIZE=10485760
+      - SEARCH_CHUNK_SIZE=1000
+      - SEARCH_OVERLAP=200
+      - SEMANTIC_SEARCH_THRESHOLD=1.0
+    volumes:
+      - ./backend/data:/app/data
+      - ./notes:/app/notes
+    networks:
+      - ai-notebook-network
+
+networks:
+  ai-notebook-network:
+    driver: bridge 

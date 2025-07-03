@@ -1,5 +1,6 @@
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from pathlib import Path
 
@@ -10,6 +11,13 @@ from .index_service import IndexService
 from .task_processor_service import TaskProcessorService
 
 logger = logging.getLogger(__name__)
+
+# 添加任务统计缓存
+_pending_tasks_cache = {
+    "data": None,
+    "last_update": None,
+    "cache_duration": 15  # 缓存15秒
+}
 
 class VectorizationManager:
     """向量化管理器 - 统一管理文件的向量化和索引流程"""
@@ -117,8 +125,6 @@ class VectorizationManager:
         """添加向量化任务（带去重）"""
         return self.task_processor.add_task(file_id, file_path, "vector_index", priority)
     
-
-    
     def _execute_vectorization(self, file: File) -> bool:
         """执行向量化"""
         try:
@@ -143,20 +149,28 @@ class VectorizationManager:
             logger.error(f"执行向量化失败: {file.file_path}, 错误: {e}")
             return False
     
-
-    
     def get_pending_tasks_count(self) -> Dict[str, int]:
         """获取待处理任务统计"""
         try:
+            # 检查缓存是否有效
+            if _pending_tasks_cache["data"] and datetime.now() - _pending_tasks_cache["last_update"] < timedelta(seconds=_pending_tasks_cache["cache_duration"]):
+                return _pending_tasks_cache["data"]
+            
             vector_count = self.db.query(PendingTask).filter(
                 PendingTask.task_type == "vector_index",
                 PendingTask.status == "pending"
             ).count()
             
-            return {
+            result = {
                 "vector_index": vector_count,
                 "total": vector_count
             }
+            
+            # 更新缓存
+            _pending_tasks_cache["data"] = result
+            _pending_tasks_cache["last_update"] = datetime.now()
+            
+            return result
             
         except Exception as e:
             logger.error(f"获取任务统计失败: {e}")

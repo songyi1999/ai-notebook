@@ -35,9 +35,11 @@ import {
   FileData,
   SmartLinkSuggestion,
   getFiles,
+  getTags,
+  createTag,
+  createFileTag,
   suggestTags,
   discoverSmartLinks,
-  createTag,
   createLink,
   getAIStatus
 } from '../services/api';
@@ -139,18 +141,42 @@ const AutoProcessor: React.FC<AutoProcessorProps> = ({
           for (const tagName of suggestedTags) {
             try {
               // 尝试创建标签（如果已存在会失败，但不影响流程）
-              await createTag({
-                name: tagName,
-                description: `AI自动生成的标签`,
-                color: '#722ed1'
-              });
+              let tagId: number | undefined;
               
-              // 关联标签到文件
-              // 注意：这里需要获取标签ID，但为了简化，我们先跳过文件标签关联
-              result.appliedTags.push(tagName);
+              try {
+                const newTag = await createTag({
+                  name: tagName,
+                  description: `AI自动生成的标签`,
+                  color: '#722ed1'
+                });
+                tagId = newTag.id;
+              } catch (createError) {
+                // 标签可能已存在，尝试获取现有标签
+                console.log(`标签 "${tagName}" 可能已存在，尝试获取现有标签`);
+                try {
+                  const allTags = await getTags();
+                  const existingTag = allTags.find((tag: any) => tag.name === tagName);
+                  if (existingTag) {
+                    tagId = existingTag.id;
+                  }
+                } catch (getError) {
+                  console.error(`获取标签失败:`, getError);
+                }
+              }
+              
+              // 如果成功获取到标签ID，则关联到文件
+              if (tagId && file.id) {
+                try {
+                  await createFileTag(file.id, tagId);
+                  result.appliedTags.push(tagName);
+                  console.log(`标签 "${tagName}" 已成功关联到文件 "${file.title}"`);
+                } catch (linkError) {
+                  console.error(`关联标签到文件失败:`, linkError);
+                  // 即使关联失败，标签也已创建，仍算作建议成功
+                }
+              }
             } catch (error) {
-              // 标签可能已存在，继续处理
-              console.log(`标签 "${tagName}" 可能已存在`);
+              console.error(`处理标签 "${tagName}" 失败:`, error);
             }
           }
         } catch (error) {

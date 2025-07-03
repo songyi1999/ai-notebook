@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     
     # 嵌入模型配置
     embedding_model_name: str = "text-embedding-ada-002"  # 默认OpenAI模型
+    embedding_base_url: Optional[str] = None  # 嵌入模型专用API地址，为空时使用openai_base_url
+    embedding_api_key: Optional[str] = None   # 嵌入模型专用API密钥，为空时使用openai_api_key
     
     # 文件存储配置
     notes_directory: str = "./notes"  # 相对于backend目录，在Docker中指向挂载的/app/notes
@@ -44,6 +46,14 @@ class Settings(BaseSettings):
     embedding_dimension: int = 1536  # OpenAI text-embedding-ada-002
     semantic_search_threshold: float = 1.0  # 语义搜索距离阈值（距离越小越相似，小于此值的结果将被保留）
     
+    def get_embedding_base_url(self) -> Optional[str]:
+        """获取嵌入模型API地址，优先使用专用配置，否则回退到通用配置"""
+        return self.embedding_base_url or self.openai_base_url
+    
+    def get_embedding_api_key(self) -> Optional[str]:
+        """获取嵌入模型API密钥，优先使用专用配置，否则回退到通用配置"""
+        return self.embedding_api_key or self.openai_api_key
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

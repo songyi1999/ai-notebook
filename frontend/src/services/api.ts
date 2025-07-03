@@ -76,6 +76,11 @@ export interface TagData {
     updated_at?: string;
 }
 
+export interface TagWithStats extends TagData {
+    usage_count: number;
+    recent_files: string[];
+}
+
 // 文件标签关联接口
 export interface FileTagData {
     id?: number;
@@ -132,6 +137,7 @@ export interface SystemStatus {
     total_files: number;
     total_embeddings: number;
     pending_tasks: number;
+    vector_count_method?: string; // 'estimated' 表示估算值, 'exact' 表示精确值
     task_details: {
         by_status: Record<string, number>;
         by_type: Record<string, number>;
@@ -167,6 +173,11 @@ export class ApiClient {
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`API请求失败: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+
+        // 处理204 No Content响应（无响应体）
+        if (response.status === 204) {
+            return undefined as T;
         }
 
         return response.json();
@@ -284,6 +295,10 @@ export class ApiClient {
     // 标签相关API
     async getTags(skip: number = 0, limit: number = 100): Promise<TagData[]> {
         return this.request<TagData[]>(`/tags?skip=${skip}&limit=${limit}`);
+    }
+
+    async getTagsWithStats(skip: number = 0, limit: number = 100): Promise<TagWithStats[]> {
+        return this.request<TagWithStats[]>(`/tags-with-stats?skip=${skip}&limit=${limit}`);
     }
 
     async getTag(tagId: number): Promise<TagData> {
@@ -441,6 +456,7 @@ export const getPopularQueries = (...args: Parameters<ApiClient['getPopularQueri
 export const moveFile = (...args: Parameters<ApiClient['moveFile']>) => apiClient.moveFile(...args);
 // 标签相关导出
 export const getTags = (...args: Parameters<ApiClient['getTags']>) => apiClient.getTags(...args);
+export const getTagsWithStats = (...args: Parameters<ApiClient['getTagsWithStats']>) => apiClient.getTagsWithStats(...args);
 export const getTag = (...args: Parameters<ApiClient['getTag']>) => apiClient.getTag(...args);
 export const createTag = (...args: Parameters<ApiClient['createTag']>) => apiClient.createTag(...args);
 export const updateTag = (...args: Parameters<ApiClient['updateTag']>) => apiClient.updateTag(...args);

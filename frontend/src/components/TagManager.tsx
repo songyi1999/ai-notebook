@@ -28,12 +28,15 @@ import {
   SearchOutlined,
   SyncOutlined,
   RobotOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
   TagData,
+  TagWithStats,
   getTags,
+  getTagsWithStats,
   createTag,
   updateTag,
   deleteTag,
@@ -53,10 +56,7 @@ interface TagManagerProps {
   onTagsChange?: (tags: TagData[]) => void;
 }
 
-interface TagWithStats extends TagData {
-  usage_count?: number;
-  recent_files?: string[];
-}
+
 
 const TagManager: React.FC<TagManagerProps> = ({
   currentFileId,
@@ -77,6 +77,9 @@ const TagManager: React.FC<TagManagerProps> = ({
   const [fileTags, setFileTags] = useState<TagData[]>([]);
   const [fileTagsLoading, setFileTagsLoading] = useState(false);
   const [addTagModalVisible, setAddTagModalVisible] = useState(false);
+  
+  // 全局标签管理弹窗状态
+  const [globalTagsModalVisible, setGlobalTagsModalVisible] = useState(false);
 
   // 默认颜色选项
   const defaultColors = [
@@ -88,25 +91,27 @@ const TagManager: React.FC<TagManagerProps> = ({
   const loadTags = useCallback(async () => {
     try {
       setLoading(true);
-      const tagsData = await getTags(0, 1000); // 加载所有标签
-      
-      // TODO: 这里可以添加标签使用统计的API调用
-      // 目前先设置模拟数据
-      const tagsWithStats: TagWithStats[] = tagsData.map(tag => ({
-        ...tag,
-        usage_count: Math.floor(Math.random() * 20), // 模拟使用次数
-        recent_files: [] // 模拟最近使用的文件
-      }));
-      
+      // 使用带统计信息的API
+      const tagsWithStats = await getTagsWithStats(0, 1000);
       setTags(tagsWithStats);
-      onTagsChange?.(tagsData);
+      
+      // 为了兼容onTagsChange回调，传递基础标签数据
+      const basicTags: TagData[] = tagsWithStats.map(tag => ({
+        id: tag.id,
+        name: tag.name,
+        description: tag.description,
+        color: tag.color,
+        created_at: tag.created_at,
+        updated_at: tag.updated_at
+      }));
+      onTagsChange?.(basicTags);
     } catch (error) {
       console.error('加载标签失败:', error);
       message.error('加载标签失败');
     } finally {
       setLoading(false);
     }
-  }, [onTagsChange]);
+  }, []);
 
   // 加载当前文件的标签
   const loadFileTags = useCallback(async () => {
@@ -142,7 +147,7 @@ const TagManager: React.FC<TagManagerProps> = ({
     } finally {
       setFileTagsLoading(false);
     }
-  }, [currentFileId, tags]);
+  }, [currentFileId]);
 
   // 获取AI标签建议
   const handleSuggestTags = useCallback(async () => {
@@ -174,7 +179,7 @@ const TagManager: React.FC<TagManagerProps> = ({
     try {
       await createFileTag(currentFileId, tagId);
       message.success('标签添加成功');
-      loadFileTags();
+      await loadFileTags(); // 重新加载文件标签
       setAddTagModalVisible(false);
     } catch (error) {
       console.error('添加标签失败:', error);
@@ -192,20 +197,23 @@ const TagManager: React.FC<TagManagerProps> = ({
     try {
       await deleteFileTag(currentFileId, tagId);
       message.success('标签移除成功');
-      loadFileTags();
+      await loadFileTags(); // 重新加载文件标签
     } catch (error) {
       console.error('移除标签失败:', error);
       message.error('移除标签失败');
     }
   };
 
-  // 创建或更新标签
+  // 保存标签（创建或更新）
   const handleSaveTag = async (values: any) => {
     try {
+      // 处理颜色格式
+      const color = typeof values.color === 'string' ? values.color : values.color?.toHexString?.() || '#1890ff';
+      
       const tagData = {
         name: values.name,
         description: values.description || '',
-        color: typeof values.color === 'string' ? values.color : values.color?.toHexString?.() || '#1890ff'
+        color: color
       };
 
       if (editingTag) {
@@ -219,7 +227,7 @@ const TagManager: React.FC<TagManagerProps> = ({
       setModalVisible(false);
       setEditingTag(null);
       form.resetFields();
-      loadTags();
+      await loadTags();
     } catch (error) {
       console.error('保存标签失败:', error);
       message.error('保存标签失败');
@@ -231,7 +239,7 @@ const TagManager: React.FC<TagManagerProps> = ({
     try {
       await deleteTag(tagId);
       message.success('标签删除成功');
-      loadTags();
+      await loadTags();
     } catch (error) {
       console.error('删除标签失败:', error);
       message.error('删除标签失败');
@@ -244,7 +252,7 @@ const TagManager: React.FC<TagManagerProps> = ({
     form.setFieldsValue({
       name: tag.name,
       description: tag.description,
-      color: tag.color || '#1890ff'
+      color: tag.color
     });
     setModalVisible(true);
   };
@@ -252,14 +260,17 @@ const TagManager: React.FC<TagManagerProps> = ({
   // 从建议创建标签
   const handleCreateFromSuggestion = async (tagName: string) => {
     try {
-      await createTag({
+      const tagData = {
         name: tagName,
-        description: `AI建议的标签`,
+        description: `AI建议的标签：${tagName}`,
         color: defaultColors[Math.floor(Math.random() * defaultColors.length)]
-      });
+      };
+
+      await createTag(tagData);
       message.success(`标签 "${tagName}" 创建成功`);
-      loadTags();
-      // 从建议列表中移除
+      
+      // 更新状态
+      await loadTags();
       setSuggestedTags(prev => prev.filter(name => name !== tagName));
     } catch (error) {
       console.error('创建标签失败:', error);
@@ -267,7 +278,7 @@ const TagManager: React.FC<TagManagerProps> = ({
     }
   };
 
-  // 应用AI建议的标签到当前文件
+  // 应用建议标签到文件
   const handleApplySuggestedTagToFile = async (tagName: string) => {
     if (!currentFileId) {
       message.warning('请先选择文件');
@@ -280,19 +291,20 @@ const TagManager: React.FC<TagManagerProps> = ({
       
       if (!existingTag) {
         // 创建新标签
-        existingTag = await createTag({
+        const tagData = {
           name: tagName,
-          description: `AI建议的标签`,
+          description: `AI建议的标签：${tagName}`,
           color: defaultColors[Math.floor(Math.random() * defaultColors.length)]
-        });
-        loadTags(); // 重新加载标签列表
-      }
-
-      // 检查是否已经关联
-      const isAlreadyAssigned = fileTags.some(tag => tag.id === existingTag!.id);
-      if (isAlreadyAssigned) {
-        message.warning(`标签 "${tagName}" 已经应用到当前文件`);
-        return;
+        };
+        
+        await createTag(tagData);
+        await loadTags(); // 重新加载标签
+        existingTag = tags.find(tag => tag.name === tagName);
+        
+        if (!existingTag) {
+          message.error('创建标签失败');
+          return;
+        }
       }
 
       // 应用到当前文件
@@ -300,7 +312,7 @@ const TagManager: React.FC<TagManagerProps> = ({
       message.success(`标签 "${tagName}" 已应用到当前文件`);
       
       // 更新状态
-      loadFileTags();
+      await loadFileTags();
       setSuggestedTags(prev => prev.filter(name => name !== tagName));
     } catch (error) {
       console.error('应用标签失败:', error);
@@ -389,11 +401,11 @@ const TagManager: React.FC<TagManagerProps> = ({
 
   useEffect(() => {
     loadTags();
-  }, [loadTags]);
+  }, []);
 
   useEffect(() => {
     loadFileTags();
-  }, [loadFileTags]);
+  }, [currentFileId]);
 
   return (
     <div style={{ 
@@ -457,92 +469,6 @@ const TagManager: React.FC<TagManagerProps> = ({
         </Card>
       )}
 
-      {/* 头部统计信息 */}
-      <Row gutter={16} style={{ marginBottom: '16px' }}>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="总标签数"
-              value={tags.length}
-              prefix={<TagOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="活跃标签"
-              value={tags.filter(tag => (tag.usage_count || 0) > 0).length}
-              valueStyle={{ color: '#3f8600' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="未使用标签"
-              value={tags.filter(tag => (tag.usage_count || 0) === 0).length}
-              valueStyle={{ color: '#cf1322' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="AI建议"
-              value={suggestedTags.length}
-              prefix={<RobotOutlined />}
-              valueStyle={{ color: '#722ed1' }}
-            />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* 操作栏 */}
-      <Card style={{ marginBottom: '16px' }}>
-        <Row justify="space-between" align="middle">
-          <Col span={12}>
-            <Space>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => {
-                  setEditingTag(null);
-                  form.resetFields();
-                  setModalVisible(true);
-                }}
-              >
-                新建标签
-              </Button>
-              <Button
-                icon={<RobotOutlined />}
-                loading={suggestLoading}
-                onClick={handleSuggestTags}
-                disabled={!currentFileId}
-              >
-                AI标签建议
-              </Button>
-              <Button
-                icon={<SyncOutlined />}
-                onClick={loadTags}
-                loading={loading}
-              >
-                刷新
-              </Button>
-            </Space>
-          </Col>
-          <Col span={8}>
-            <Search
-              placeholder="搜索标签名称或描述"
-              allowClear
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              prefix={<SearchOutlined />}
-            />
-          </Col>
-        </Row>
-      </Card>
-
       {/* AI建议标签 */}
       {suggestedTags.length > 0 && (
         <Card
@@ -592,33 +518,151 @@ const TagManager: React.FC<TagManagerProps> = ({
         </Card>
       )}
 
-      {/* 标签列表 */}
-      <Card title={<Title level={4}>标签管理</Title>}>
-        <Table
-          columns={columns}
-          dataSource={filteredTags}
-          rowKey="id"
-          loading={loading}
-          pagination={{
-            pageSize: 20,
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 个标签`,
-          }}
-          locale={{
-            emptyText: (
-              <Empty
-                description="暂无标签"
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-              >
-                <Button type="primary" onClick={() => setModalVisible(true)}>
-                  创建第一个标签
-                </Button>
-              </Empty>
-            ),
-          }}
-        />
+      {/* 全局标签管理按钮 */}
+      <Card style={{ textAlign: 'center', marginBottom: '16px' }}>
+        <Button
+          type="primary"
+          size="large"
+          icon={<SettingOutlined />}
+          onClick={() => setGlobalTagsModalVisible(true)}
+        >
+          设置全局标签
+        </Button>
+        <Text type="secondary" style={{ display: 'block', marginTop: '8px' }}>
+          管理所有标签，查看使用统计和编辑标签信息
+        </Text>
       </Card>
+
+      {/* 全局标签管理弹窗 */}
+      <Modal
+        title={
+          <Space>
+            <SettingOutlined style={{ color: '#1890ff' }} />
+            <span>全局标签管理</span>
+          </Space>
+        }
+        open={globalTagsModalVisible}
+        onCancel={() => setGlobalTagsModalVisible(false)}
+        footer={null}
+        width={1200}
+        style={{ top: 20 }}
+      >
+        <div style={{ padding: '0 0 16px 0' }}>
+          {/* 头部统计信息 */}
+          <Row gutter={16} style={{ marginBottom: '16px' }}>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="总标签数"
+                  value={tags.length}
+                  prefix={<TagOutlined />}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="活跃标签"
+                  value={tags.filter(tag => (tag.usage_count || 0) > 0).length}
+                  valueStyle={{ color: '#3f8600' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="未使用标签"
+                  value={tags.filter(tag => (tag.usage_count || 0) === 0).length}
+                  valueStyle={{ color: '#cf1322' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="AI建议"
+                  value={suggestedTags.length}
+                  prefix={<RobotOutlined />}
+                  valueStyle={{ color: '#722ed1' }}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          {/* 操作栏 */}
+          <Card style={{ marginBottom: '16px' }}>
+            <Row justify="space-between" align="middle">
+              <Col span={12}>
+                <Space>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => {
+                      setEditingTag(null);
+                      form.resetFields();
+                      setModalVisible(true);
+                    }}
+                  >
+                    新建标签
+                  </Button>
+                  <Button
+                    icon={<RobotOutlined />}
+                    loading={suggestLoading}
+                    onClick={handleSuggestTags}
+                    disabled={!currentFileId}
+                  >
+                    AI标签建议
+                  </Button>
+                  <Button
+                    icon={<SyncOutlined />}
+                    onClick={loadTags}
+                    loading={loading}
+                  >
+                    刷新
+                  </Button>
+                </Space>
+              </Col>
+              <Col span={8}>
+                <Search
+                  placeholder="搜索标签名称或描述"
+                  allowClear
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  prefix={<SearchOutlined />}
+                />
+              </Col>
+            </Row>
+          </Card>
+
+          {/* 标签列表 */}
+          <Card title={<Title level={4}>标签管理</Title>}>
+            <Table
+              columns={columns}
+              dataSource={filteredTags}
+              rowKey="id"
+              loading={loading}
+              pagination={{
+                pageSize: 10,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total) => `共 ${total} 个标签`,
+              }}
+              locale={{
+                emptyText: (
+                  <Empty
+                    description="暂无标签"
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  >
+                    <Button type="primary" onClick={() => setModalVisible(true)}>
+                      创建第一个标签
+                    </Button>
+                  </Empty>
+                ),
+              }}
+            />
+          </Card>
+        </div>
+      </Modal>
 
       {/* 创建/编辑标签模态框 */}
       <Modal
@@ -675,71 +719,71 @@ const TagManager: React.FC<TagManagerProps> = ({
               ]}
             />
           </Form.Item>
-                  </Form>
-        </Modal>
+        </Form>
+      </Modal>
 
-        {/* 添加标签到文件模态框 */}
-        <Modal
-          title="为文件添加标签"
-          open={addTagModalVisible}
-          onCancel={() => setAddTagModalVisible(false)}
-          footer={null}
-          width={600}
-        >
-          <div style={{ marginBottom: '16px' }}>
-            <Text strong>文件：</Text>
-            <Text type="secondary">{currentFileTitle}</Text>
-          </div>
+      {/* 添加标签到文件模态框 */}
+      <Modal
+        title="为文件添加标签"
+        open={addTagModalVisible}
+        onCancel={() => setAddTagModalVisible(false)}
+        footer={null}
+        width={600}
+      >
+        <div style={{ marginBottom: '16px' }}>
+          <Text strong>文件：</Text>
+          <Text type="secondary">{currentFileTitle}</Text>
+        </div>
+        
+        <div style={{ marginBottom: '16px' }}>
+          <Text strong>选择标签：</Text>
+        </div>
+        
+        <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+          <Space wrap>
+            {tags
+              .filter(tag => !fileTags.some(fileTag => fileTag.id === tag.id))
+              .map((tag) => (
+                <Tag
+                  key={tag.id}
+                  color={tag.color}
+                  style={{ 
+                    cursor: 'pointer', 
+                    padding: '6px 12px',
+                    fontSize: '14px',
+                    marginBottom: '8px'
+                  }}
+                  onClick={() => handleAddTagToFile(tag.id!)}
+                >
+                  <TagOutlined /> {tag.name}
+                </Tag>
+              ))}
+          </Space>
           
-          <div style={{ marginBottom: '16px' }}>
-            <Text strong>选择标签：</Text>
-          </div>
-          
-          <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-            <Space wrap>
-              {tags
-                .filter(tag => !fileTags.some(fileTag => fileTag.id === tag.id))
-                .map((tag) => (
-                  <Tag
-                    key={tag.id}
-                    color={tag.color}
-                    style={{ 
-                      cursor: 'pointer', 
-                      padding: '6px 12px',
-                      fontSize: '14px',
-                      marginBottom: '8px'
-                    }}
-                    onClick={() => handleAddTagToFile(tag.id!)}
-                  >
-                    <TagOutlined /> {tag.name}
-                  </Tag>
-                ))}
-            </Space>
-            
-            {tags.filter(tag => !fileTags.some(fileTag => fileTag.id === tag.id)).length === 0 && (
-              <Empty 
-                description="所有标签都已添加到当前文件"
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-              />
-            )}
-          </div>
-          
-          <Divider />
-          
-          <div style={{ textAlign: 'center' }}>
-            <Button 
-              type="primary" 
-              onClick={() => {
-                setAddTagModalVisible(false);
-                setModalVisible(true);
-              }}
-            >
-              创建新标签
-            </Button>
-          </div>
-        </Modal>
-      </div>
-    );
-  };
+          {tags.filter(tag => !fileTags.some(fileTag => fileTag.id === tag.id)).length === 0 && (
+            <Empty 
+              description="所有标签都已添加到当前文件"
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            />
+          )}
+        </div>
+        
+        <Divider />
+        
+        <div style={{ textAlign: 'center' }}>
+          <Button 
+            type="primary" 
+            onClick={() => {
+              setAddTagModalVisible(false);
+              setModalVisible(true);
+            }}
+          >
+            创建新标签
+          </Button>
+        </div>
+      </Modal>
+    </div>
+  );
+};
 
-  export default TagManager; 
+export default TagManager; 

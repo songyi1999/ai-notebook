@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from ..schemas.tag import TagCreate, TagUpdate, TagResponse, FileTagCreate, FileTagResponse
 from ..services.tag_service import TagService, FileTagService
@@ -27,6 +27,20 @@ def read_all_tags_api(skip: int = 0, limit: int = 100, db: Session = Depends(get
     tag_service = TagService(db)
     tags = tag_service.get_all_tags(skip=skip, limit=limit)
     return tags
+
+@router.get("/tags-with-stats", response_model=List[Dict[str, Any]])
+def read_tags_with_stats_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """获取带使用统计的标签列表"""
+    tag_service = TagService(db)
+    tags_with_stats = tag_service.get_tags_with_usage_stats(skip=skip, limit=limit)
+    return tags_with_stats
+
+@router.get("/tags/{tag_id}/usage-count")
+def get_tag_usage_count_api(tag_id: int, db: Session = Depends(get_db)):
+    """获取单个标签的使用次数"""
+    tag_service = TagService(db)
+    usage_count = tag_service.get_tag_usage_count(tag_id)
+    return {"tag_id": tag_id, "usage_count": usage_count}
 
 @router.put("/tags/{tag_id}", response_model=TagResponse)
 def update_tag_api(tag_id: int, tag: TagUpdate, db: Session = Depends(get_db)):

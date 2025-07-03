@@ -152,6 +152,7 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   const [activeTab, setActiveTab] = useState('edit');
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [tagRefreshTrigger, setTagRefreshTrigger] = useState(0);
   
 
 
@@ -576,18 +577,24 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     }
   }, []);
 
+  // 标签变化回调
+  const handleTagsChange = useCallback((tags: any[]) => {
+    // 这里可以处理标签变化的逻辑
+    console.log('标签已更新:', tags);
+  }, []);
+
   // 定期更新系统状态
   useEffect(() => {
     // 初始加载
     loadSystemStatus();
     
-    // 每30秒更新一次系统状态
-    const statusInterval = setInterval(loadSystemStatus, 30000);
+    // 每60秒更新一次系统状态（从30秒改为60秒，减少请求频率）
+    const statusInterval = setInterval(loadSystemStatus, 60000);
     
     return () => {
       clearInterval(statusInterval);
     };
-  }, [loadSystemStatus]);
+  }, []); // 移除loadSystemStatus依赖，避免重新创建interval
 
   return (
     <div style={{ 
@@ -716,13 +723,11 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                   overflow: 'hidden'
                 }}>
                   <TagManager
+                    key={tagRefreshTrigger}
                     currentFileId={currentNote.id}
                     currentFileTitle={currentNote.title}
                     currentFileContent={currentNote.content}
-                    onTagsChange={(tags) => {
-                      // 这里可以处理标签变化的逻辑
-                      console.log('标签已更新:', tags);
-                    }}
+                    onTagsChange={handleTagsChange}
                   />
                 </div>
               )
@@ -746,6 +751,13 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                       // 处理完成后的回调
                       console.log('AI处理完成:', results);
                       message.success(`AI处理完成！处理了 ${results.length} 个文件`);
+                      
+                      // 检查是否有标签被应用，如果有则刷新TagManager
+                      const hasAppliedTags = results.some(result => result.appliedTags.length > 0);
+                      if (hasAppliedTags) {
+                        setTagRefreshTrigger(prev => prev + 1);
+                        console.log('检测到标签应用，刷新TagManager组件');
+                      }
                     }}
                   />
                 </div>
@@ -820,6 +832,9 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
               <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <DatabaseOutlined style={{ color: '#52c41a' }} />
                 嵌入: {systemStatus.total_embeddings}
+                {systemStatus.vector_count_method === 'estimated' && (
+                  <Text type="secondary" style={{ fontSize: '10px' }}>~</Text>
+                )}
               </span>
               <span style={{ 
                 display: 'flex', 

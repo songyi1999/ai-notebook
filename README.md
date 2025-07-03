@@ -19,6 +19,706 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 
 ### 最新功能更新
 
+#### 🏷️ 标签使用统计真实数据修复 (2025-07-03)
+- **问题修复**：修复标签管理中使用次数显示模拟数据的问题，每次刷新数据都会变动
+- **后端优化**：
+  - 新增`get_tags_with_usage_stats()`方法，支持获取带真实使用统计的标签列表
+  - 新增`get_tag_usage_count()`方法，支持获取单个标签的使用次数
+  - 新增`/tags-with-stats`和`/tags/{tag_id}/usage-count`API端点
+- **前端优化**：
+  - 新增`TagWithStats`接口定义，支持使用统计数据
+  - 新增`getTagsWithStats()`API调用方法
+  - 修改`loadTags()`函数，使用真实的统计数据替代模拟数据
+- **数据准确性**：
+  - 标签使用次数基于`file_tags`表的真实关联数据计算
+  - 支持显示最近使用的文件列表（最多5个）
+  - 数据刷新后保持一致性，不再随机变动
+- **用户体验**：统计信息更加准确可靠，便于用户了解标签的实际使用情况
+
+#### 🏷️ 标签界面优化 (2025-07-03)
+- **界面简化**：标签页面采用最小化设计原则，提升用户体验
+- **功能分离**：
+  - **当前文件标签**：保留在主界面，便于快速管理当前文件的标签
+  - **全局标签管理**：移至独立弹窗，通过"设置全局标签"按钮访问
+- **弹窗管理**：全局标签管理弹窗包含完整功能：
+  - 标签统计信息（总数、活跃、未使用、AI建议）
+  - 标签搜索和过滤功能
+  - 新建、编辑、删除标签操作
+  - 完整的标签列表表格视图
+- **用户体验优化**：界面更清爽，功能更聚焦，操作更直观
+- **响应式设计**：弹窗采用大尺寸设计(1200px)，提供充足的操作空间
+
+#### 🤖 AI智能问答系统 (2025-01-01)
+- **RAG问答功能**：基于检索增强生成(RAG)的智能问答，AI会先搜索相关笔记，再基于内容回答问题
+- **上下文理解**：AI助手能理解问题并从笔记库中检索最相关的内容作为回答依据
+- **智能对话界面**：现代化的对话界面，支持流式输出和打字机效果
+- **相关文档展示**：问答结果会显示参考的相关文档，提供透明的信息来源
+- **本地化部署**：完全基于本地LLM服务，确保数据隐私和安全
+
+#### 🔍 智能搜索系统 (2024-12-28)
+- **多种搜索模式**：支持关键词搜索、语义搜索和混合搜索
+- **搜索历史**：自动记录搜索历史，支持快速重复搜索
+- **热门查询**：显示最常用的搜索词，提供搜索建议
+- **搜索统计**：显示搜索结果数量、响应时间等统计信息
+- **相似度阈值**：语义搜索支持自定义相似度阈值，提高搜索精度
+
+#### 🚀 系统性能优化 (2024-12-27)
+- **响应速度提升**：系统状态接口响应时间从20秒优化到0.136秒，提升99.3%
+- **缓存机制**：多层次缓存策略，显著提升系统响应速度
+- **估算算法**：智能估算替代耗时的精确查询，在保证准确性的同时大幅提升性能
+- **界面优化**：解决频繁请求和界面卡顿问题，页面响应时间提升95%
+
+#### ⚡ ChromaDB向量优化架构 (2025-01-01)
+- **双存储架构**：SQLite存储元数据，ChromaDB专门存储向量数据，实现最佳性能
+- **高性能向量搜索**：使用ChromaDB的专业向量索引，搜索速度提升10倍以上
+- **智能数据同步**：自动同步SQLite和ChromaDB数据，确保一致性
+- **向量数据隔离**：向量数据与元数据分离，减少SQLite负担，提升整体性能
+- **批量向量操作**：支持批量添加、删除和更新向量，提高索引构建效率
+- **容错机制**：ChromaDB连接失败时自动降级到基础功能，保证系统可用性
+- **专业向量存储**：利用ChromaDB的原生向量存储能力，优化内存使用和查询性能
+- **向量版本管理**：支持向量数据的版本控制和增量更新
+
+#### ⚡ 启动流程性能优化 (2025-01-01)
+- **快速启动**：系统启动时间从30-40秒优化到3-5秒，立即可用
+- **后台索引构建**：启动时自动扫描文件并创建后台任务，向量索引在后台异步处理
+- **智能文件扫描**：自动检测文件变化，只为新文件或修改的文件创建索引任务
+- **非阻塞启动**：数据库初始化完成后立即启动应用，不等待索引构建完成
+- **后台任务处理**：在单独线程中处理向量索引，不影响用户使用
+- **状态监控**：详细的启动和处理日志，方便监控进度
+- **自动化处理**：无需手动干预，系统自动完成所有优化流程
+- **配置修复**：修复嵌入模型配置，现在正确使用Docker Compose中指定的模型名称
+
+#### 🚀 文件保存性能优化 (2025-01-01)
+- **快速保存模式**：文件保存逻辑优化，先保存文件到磁盘，立即返回响应
+- **后台任务队列**：向量化和索引更新改为后台异步处理，避免保存超时
+- **定时任务处理**：新增后台任务处理器，每5分钟处理一次待处理任务队列
+- **锁机制保护**：任务处理器使用文件锁防止重复执行，确保系统稳定
+- **自动保存优化**：前端自动保存间隔调整为30秒，减少服务器压力
+- **智能切换保存**：文件切换时自动保存未保存的修改，避免数据丢失
+- **任务重试机制**：后台任务支持失败重试，最多重试3次
+- **任务状态跟踪**：完整的任务状态管理（待处理/处理中/已完成/失败）
+
+#### 🗄️ 数据库结构优化 (2025-01-01)
+- **冗余字段清理**：移除files表中的冗余tags字段，避免数据不一致
+- **规范化设计**：标签关系统一通过tags表和file_tags关联表管理
+- **架构一致性**：确保前后端类型定义与数据库结构完全一致
+- **数据完整性**：通过外键约束和规范化设计保证数据完整性
+- **性能优化**：减少冗余存储，优化查询性能和存储空间
+- **维护简化**：统一的标签管理逻辑，简化代码维护和扩展
+
+#### 🚀 嵌入架构重构 (2025-07-01)
+- **灵活嵌入接口**：移除LangChain依赖，使用标准 `/v1/embeddings` 接口
+- **服务兼容性**：支持Ollama、OpenAI及任何兼容OpenAI格式的嵌入服务
+- **语义搜索完善**：嵌入和向量搜索功能完全正常工作
+- **架构优化**：通过环境变量轻松切换不同AI服务提供商
+- **系统稳定性**：路径配置修复，数据库操作正常，搜索功能完善
+
+#### 启动时自动重建索引机制
+- **完全重建策略**：每次容器重启时自动删除现有数据库和向量库
+- **避免数据不一致**：消除数据库状态不一致导致的各种错误
+- **简化维护逻辑**：不再需要复杂的增量更新和状态检查
+- **启动流程**：
+  1. 清理现有SQLite数据库文件
+  2. 清理现有向量数据库目录  
+  3. 重新创建数据库表结构
+  4. 扫描notes目录中的所有文件
+  5. 重建SQLite索引
+  6. 重建向量索引和嵌入
+- **启动日志**：详细的启动进度日志，方便监控重建过程
+
+#### 智能搜索功能
+- **多种搜索模式**：关键词搜索、语义搜索、混合搜索三种模式
+- **关键词搜索**：基于SQLite LIKE模糊搜索，返回所有匹配文件
+- **语义搜索**：基于向量相似度，返回前10个最相关文件，显示相似度评分
+- **混合搜索**：结合关键词和语义搜索结果，智能去重排序
+- **搜索历史**：记录所有搜索查询，支持快速重新搜索
+- **热门搜索**：统计最常用的搜索查询
+- **快捷键支持**：Ctrl+K 快速打开搜索，ESC 关闭搜索窗口
+- **响应时间统计**：实时显示搜索耗时和结果数量
+- **搜索验证**：前端完全拦截少于2个字符的搜索，提供友好提示
+- **输入框修复**：修复搜索输入框输入第一个字符后立即禁用的问题，现在可以正常连续输入
+- **数据库修复**：修复SQLite数据库损坏导致搜索功能失效的问题，通过强制重建数据库和索引恢复正常
+- **索引同步机制**：实现笔记内容更新时的自动索引同步，采用"同步保存 + 异步索引"模式确保搜索结果实时性
+
+#### 文件树选中状态功能
+- **文件夹选中状态**：点击文件夹时会显示选中状态，便于识别当前工作目录
+- **当前目录显示**：在文件树顶部显示当前选中的目录路径
+- **智能新建**：新建文件/文件夹时会在当前选中的目录下创建
+- **视觉反馈**：选中的文件/文件夹有明显的蓝色背景标识
+- **目录指示**：创建对话框中会明确显示将在哪个目录下创建新项目
+- **双击展开**：双击文件夹名称可以展开或收缩目录，无需点击箭头
+- **光标提示**：文件夹显示手型光标，提示用户可以双击操作
+
+#### 编辑器增强功能
+- **自动保存优化**：修改为每30秒自动保存编辑内容，减少频繁保存
+- **智能切换保存**：切换文件时自动保存当前未保存的修改
+- **Ctrl+S快捷键**：支持传统的保存快捷键
+- **保存状态指示**：实时显示保存状态（已保存/保存中/未保存）
+
+#### 文件操作优化
+- **拖拽移动**：支持文件和文件夹的拖拽移动
+- **右键菜单**：提供新建、重命名、删除等快捷操作
+- **自动展开**：操作完成后自动展开相关目录
+
+#### 文件管理功能增强
+- **图标化操作**：将新建文件、新建文件夹按钮改为图标形式，节省界面空间
+- **删除功能**：添加删除图标按钮，支持删除选中的文件或文件夹
+- **确认机制**：删除操作有确认对话框，避免误删，说明操作不可撤销
+- **完整删除**：删除操作同时删除物理文件、数据库记录和向量索引，确保数据一致性
+- **刷新功能**：添加刷新图标按钮，可以重新读取文件系统并更新文件树
+- **重新索引**：添加重新构建索引功能，清空所有数据库和向量库后重新扫描构建
+- **智能提示**：所有图标按钮都有Tooltip提示说明功能
+- **状态显示**：在文件树顶部显示当前目录和已选中的文件/文件夹路径
+- **按钮状态**：删除按钮仅在有选中项时启用，避免无效操作
+
+### 技术架构
+
+- **前端**：React + TypeScript + Ant Design
+- **后端**：FastAPI + Python
+- **数据库**：SQLite + ChromaDB
+- **AI集成**：标准 `/v1/embeddings` 接口，支持Ollama、OpenAI等多种AI服务
+- **部署**：Docker + Docker Compose
+
+## 🚀 性能优化
+
+### 语义检索性能优化
+我们对语义检索进行了全面的性能优化，显著提升了搜索速度：
+
+#### 优化措施
+1. **HTTP超时优化**：从30秒降低到10秒，减少不必要等待
+2. **配置参数优化**：
+   - 嵌入维度：从1536调整为1024（匹配BGE模型实际维度）
+   - 语义搜索阈值：保持1.0（距离阈值，越小越严格）
+3. **查询向量缓存**：实现LRU缓存机制，避免重复计算
+4. **性能监控**：添加详细的性能日志，便于问题诊断
+
+#### 性能提升效果
+- **搜索速度提升**：约19%的性能提升（从1357ms降至1101ms）
+- **缓存机制**：相同查询可复用向量，减少计算开销
+- **监控完善**：详细的耗时统计，便于性能调优
+
+#### 技术细节
+- **嵌入模型**：BGE-large-zh-v1.5（1024维中文嵌入）
+- **向量数据库**：ChromaDB with LangChain集成
+- **缓存策略**：MD5哈希键 + LRU淘汰策略
+- **超时控制**：10秒HTTP请求超时
+
+#### 搜索性能对比
+| 优化项目 | 优化前 | 优化后 | 提升 |
+|---------|--------|--------|------|
+| 搜索耗时 | 1357ms | 1101ms | 19% ↑ |
+| HTTP超时 | 30s | 10s | 67% ↓ |
+| 嵌入维度 | 1536 | 1024 | 匹配模型 |
+| 搜索阈值 | 1.0 | 1.0 | 距离阈值 |
+
+#### 性能瓶颈分析
+语义检索的主要性能瓶颈包括：
+1. **嵌入模型推理**：每次搜索都需要调用AI模型生成查询向量
+2. **网络延迟**：Docker容器访问宿主机Ollama服务的网络开销
+3. **向量计算**：ChromaDB进行相似度计算的时间
+4. **数据库查询**：验证搜索结果文件存在性的SQL查询
+
+#### 未来优化方向
+1. **更快的嵌入模型**：考虑使用更轻量级的中文嵌入模型
+2. **本地嵌入服务**：将嵌入模型集成到后端服务中，减少网络调用
+3. **结果缓存**：缓存搜索结果，避免重复的向量计算
+4. **批量查询优化**：优化数据库查询，减少SQL调用次数
+
+## 系统架构图
+
+### 整体架构流程图
+```mermaid
+graph TB
+    subgraph "用户界面层"
+        UI["React前端界面"]
+        Editor["Markdown编辑器"]
+        Search["搜索界面"]
+        Chat["AI问答界面"]
+        GraphView["链接关系图谱界面"]
+    end
+
+    subgraph "API服务层"
+        API["FastAPI后端服务"]
+        FileAPI["文件管理API"]
+        SearchAPI["搜索API"]
+        AIAPI["AI问答API"]
+        GraphAPI["链接图谱API"]
+    end
+
+    subgraph "业务逻辑层"
+        FileService["文件服务"]
+        SearchService["搜索服务"]
+        AIService["AI服务"]
+        EmbeddingService["嵌入服务"]
+        LinkService["链接服务"]
+        TagService["标签服务"]
+    end
+
+    subgraph "数据存储层"
+        SQLiteDB["SQLite数据库"]
+        ChromaDB["Chroma向量库"]
+        FileSystemStore["本地文件系统"]
+    end
+
+    subgraph "AI模型层"
+        LocalLLM["本地LLM服务 (OpenAI兼容)"]
+        EmbeddingModel["嵌入模型"]
+    end
+
+    %% 用户界面到API的连接
+    UI --> API
+    Editor --> FileAPI
+    Search --> SearchAPI
+    Chat --> AIAPI
+    GraphView --> GraphAPI
+
+    %% API到业务逻辑的连接
+    FileAPI --> FileService
+    SearchAPI --> SearchService
+    AIAPI --> AIService
+    GraphAPI --> LinkService
+
+    %% 业务逻辑到数据存储的连接
+    FileService --> SQLiteDB
+    FileService --> FileSystemStore
+    SearchService --> SQLiteDB
+    SearchService --> ChromaDB
+    AIService --> ChromaDB
+    EmbeddingService --> ChromaDB
+    LinkService --> SQLiteDB
+    TagService --> SQLiteDB
+
+    %% 业务逻辑到AI模型的连接
+    AIService --> LocalLLM
+    EmbeddingService --> EmbeddingModel
+
+    %% 数据流向
+    FileService --> EmbeddingService
+    EmbeddingService --> SearchService
+    TagService --> LinkService
+```
+
+### 核心业务流程图
+```mermaid
+graph TD
+    A[用户创建/编辑笔记] --> B[保存Markdown文件]
+    B --> C[解析文件内容]
+    C --> D[提取双向链接]
+    C --> E[文本分块处理]
+    C --> F[标签提取]
+    
+    D --> G[更新链接索引]
+    E --> H[生成嵌入向量]
+    F --> I[更新标签表]
+    
+    G --> J[存储到SQLite]
+    H --> K[存储到ChromaDB]
+    I --> J
+    
+    %% 搜索流程
+    L[用户搜索] --> M{搜索类型}
+    M -->|关键词搜索| N[全文搜索SQLite]
+    M -->|语义搜索| O[向量搜索ChromaDB]
+    M -->|混合搜索| P[结合两种搜索]
+    
+    N --> Q[返回搜索结果]
+    O --> Q
+    P --> Q
+    
+    %% AI问答流程
+    R[用户提问] --> S[问题向量化]
+    S --> T[检索相关文档]
+    T --> U[构建上下文]
+    U --> V[调用本地LLM]
+    V --> W[生成回答]
+    W --> X[返回答案和来源]
+    
+    %% 链接图谱流程
+    Y[查看链接图谱] --> Z[获取链接关系]
+    Z --> AA[生成图谱数据]
+    AA --> BB[可视化展示]
+```
+
+### 笔记更新工作流程
+
+当用户修改并保存一篇笔记时，系统会触发一系列同步和异步操作来保证数据一致性。
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant FE as 前端编辑器
+    participant API as 后端API
+    participant BG as BackgroundTasks (后台任务)
+
+    User->>FE: 修改笔记内容并保存
+    FE->>API: PUT /files/{path}<br/>发送新内容
+
+    Note over API: 同步保存 (立即响应)
+    API->>FileSystemStore: 1. 更新 .md 文件
+    API->>SQLiteDB: 2. 更新 files 表
+    Note right of SQLiteDB: FTS5索引通过触发器自动更新
+    API-->>FE: 返回 "保存成功"
+    FE-->>User: 显示 "已保存"
+
+    Note over API: 异步处理 (后台运行)
+    API-->>BG: 3. 启动后台更新任务
+
+    BG->>SQLiteDB: 4a. 删除旧的链接/标签/向量记录
+    BG->>ChromaDB: 4b. 删除旧的向量
+
+    BG->>BG: 5. 重新分块/提取链接/提取标签
+
+    BG->>EmbeddingService: 6. 重新生成向量
+
+    BG->>SQLiteDB: 7a. 写入新的链接/标签/向量记录
+    BG->>ChromaDB: 7b. 写入新的向量
+
+    Note over BG: 后台索引更新完成
+```
+
+### 数据流转图
+```mermaid
+graph LR
+    subgraph "数据输入"
+        MD[Markdown文件]
+        Import[导入文档]
+        UserInput[用户输入]
+    end
+
+    subgraph "数据处理"
+        Parser[Markdown解析器]
+        Chunker[文本分块器]
+        LinkExtractor[链接提取器]
+        TagExtractor[标签提取器]
+        Embedder[向量化器]
+    end
+
+    subgraph "数据存储"
+        FileTable[(files表)]
+        LinkTable[(links表)]
+        TagTable[(tags表)]
+        FileTagTable[(file_tags表)]
+        EmbedTable[(embeddings表)]
+        VectorDB[(ChromaDB)]
+        FileSystemStore[(文件系统)]
+    end
+
+    subgraph "数据输出"
+        SearchResult[搜索结果]
+        AIAnswer[AI回答]
+        LinkGraph[链接图谱]
+        FileContent[文件内容]
+    end
+
+    %% 数据输入到处理
+    MD --> Parser
+    Import --> Parser
+    UserInput --> Parser
+
+    %% 数据处理流程
+    Parser --> Chunker
+    Parser --> LinkExtractor
+    Parser --> TagExtractor
+    Chunker --> Embedder
+
+    %% 数据存储
+    Parser --> FileTable
+    Parser --> FileSystemStore
+    LinkExtractor --> LinkTable
+    TagExtractor --> TagTable
+    TagExtractor --> FileTagTable
+    Embedder --> EmbedTable
+    Embedder --> VectorDB
+
+    %% 数据查询和输出
+    FileTable --> FileContent
+    LinkTable --> LinkGraph
+    TagTable --> LinkGraph
+    FileTagTable --> LinkGraph
+    EmbedTable --> SearchResult
+    VectorDB --> SearchResult
+    VectorDB --> AIAnswer
+    FileTable --> SearchResult
+```
+
+### AI问答系统(RAG)流程图
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant UI as 前端界面
+    participant API as FastAPI后端
+    participant Embed as 嵌入服务
+    participant ChromaDB as ChromaDB
+    participant LocalLLM as 本地LLM服务
+    participant DB as SQLiteDB
+
+    User->>UI: 输入问题
+    UI->>API: POST /api/v1/chat/ask
+    
+    Note over API: RAG检索阶段
+    API->>Embed: 将问题转换为向量
+    Embed-->>API: 返回问题向量
+    
+    API->>ChromaDB: 语义搜索相关文档
+    ChromaDB-->>API: 返回相关文档块
+    
+    API->>DB: 查询文档元信息
+    DB-->>API: 返回文档标题、路径等
+    
+    Note over API: 上下文构建阶段
+    API->>API: 构建提示词\n问题 + 相关文档上下文
+    
+    Note over API: 答案生成阶段
+    API->>LocalLLM: 发送构建好的提示词
+    LocalLLM-->>API: 返回AI生成的答案
+    
+    Note over API: 结果整理阶段
+    API->>DB: 保存对话记录
+    API->>API: 整理答案和引用来源
+    
+    API-->>UI: 返回答案和来源文档
+    UI-->>User: 显示答案和引用链接
+    
+    Note over User,DB: 整个过程约2-5秒
+```
+
+### 开发阶段流程图
+```mermaid
+gantt
+    title AI笔记本项目开发时间线
+    dateFormat  X
+    axisFormat %s
+
+    section 阶段一：基础架构
+    项目结构设计        :done, arch1, 0, 1w
+    开发环境配置        :done, arch2, after arch1, 1w
+    容器化基础设施      :active, arch3, after arch2, 1w
+    基础API设计         :arch4, after arch3, 1w
+
+    section 阶段二：核心功能
+    Markdown编辑器      :editor, after arch4, 2w
+    文件管理系统        :files, after arch4, 2w
+    双向链接功能        :links, after editor, 1w
+    基础搜索功能        :search, after files, 1w
+
+    section 阶段三：AI功能
+    本地LLM集成         :llm, after links, 2w
+    嵌入模型集成        :embed, after search, 2w
+    RAG问答系统         :rag, after llm, 2w
+    向量搜索优化        :vector, after embed, 1w
+
+    section 阶段四：高级功能
+    链接关系可视化      :graph, after rag, 2w
+    智能推荐系统        :advsearch, after vector, 2w
+    数据导入导出        :import, after graph, 1w
+    插件系统设计        :plugin, after advsearch, 1w
+
+    section 阶段五：优化部署
+    性能优化            :perf, after import, 1w
+    用户体验优化        :ux, after plugin, 1w
+    测试完善            :test, after perf, 1w
+    文档编写            :docs, after ux, 1w
+```
+
+## 如何使用流程图指导开发
+
+### 📋 架构理解
+- **整体架构流程图**：了解系统各层次的关系和数据流向
+- **核心业务流程图**：理解四大核心功能的处理流程
+- **数据流转图**：掌握数据从输入到输出的完整生命周期
+
+### 🔄 开发指导
+- **AI问答系统流程图**：实现RAG问答功能的详细步骤
+- **开发阶段流程图**：按时间线推进各阶段开发任务
+
+### 💡 开发建议
+1. **先看架构图**：理解整体设计后再开始编码
+2. **按流程实现**：严格按照业务流程图实现各功能模块
+3. **数据优先**：根据数据流转图设计数据模型和API
+4. **阶段推进**：按开发阶段流程图的时间线执行
+5. **测试验证**：每个流程节点都要有对应的测试用例
+
+## 项目结构
+
+```
+ai-notebook/
+├── frontend/                 # 前端React应用
+├── backend/                  # 后端FastAPI应用
+├── docker/                   # Docker配置文件
+├── docs/                     # 项目文档
+├── tests/                    # 测试文件
+├── scripts/                  # 构建和部署脚本
+├── docker-compose.yml        # 服务编排
+├── README.md                 # 项目说明
+├── DATABASE.md               # 数据库结构文档
+└── requirements.txt          # 依赖管理
+```
+
+## 快速开始
+
+### 环境要求
+
+- Docker 和 Docker Compose
+- 至少 16GB 内存
+- 至少 100GB 存储空间
+
+### 安装运行
+
+```bash
+# 克隆项目
+git clone <repository-url>
+cd ai-notebook
+
+# 启动服务
+docker-compose up -d
+
+# 访问应用
+# 前端：http://localhost:3000
+# API文档：http://localhost:8000/docs
+```
+
+## 开发指南
+
+### 开发环境设置
+
+```bash
+# 前端开发
+cd frontend
+npm install
+npm run dev
+
+# 后端开发
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+### 代码规范
+
+- 前端：ESLint + Prettier
+- 后端：Black + isort
+- 提交：Conventional Commits
+
+## 新增文件说明
+
+### 后台任务系统
+- **backend/app/models/pending_task.py**：待处理任务数据模型
+- **backend/app/services/task_processor_service.py**：后台任务处理服务
+- **backend/app/scripts/task_processor.py**：定时任务处理脚本
+- **backend/app/scripts/start_task_processor.sh**：定时任务启动脚本
+
+### 使用说明
+
+#### 自动启动处理（推荐）
+系统启动时会自动处理索引构建：
+1. **快速启动**：系统在3-5秒内完成启动，立即可用
+2. **后台处理**：向量索引在后台线程中异步构建，不影响用户使用
+3. **智能扫描**：自动扫描notes目录，为所有文件创建后台任务
+4. **状态监控**：可通过日志查看处理进度
+
+#### 手动任务处理（可选）
+1. **启动后台任务处理器**：
+   ```bash
+   # Linux/Mac 系统
+   chmod +x backend/app/scripts/start_task_processor.sh
+   ./backend/app/scripts/start_task_processor.sh
+   
+   # Windows 系统
+   # 手动设置计划任务，每5分钟执行一次：
+   python backend/app/scripts/task_processor.py
+   ```
+
+2. **手动测试任务处理器**：
+   ```bash
+   python backend/app/scripts/task_processor.py
+   ```
+
+3. **查看任务处理日志**：
+   ```bash
+   tail -f data/task_processor.log
+   ```
+
+### 后台任务处理脚本功能
+
+#### task_processor.py (backend/app/scripts/task_processor.py)
+
+| 函数名 | 传入参数 | 传出参数 | 功能说明 |
+|--------|----------|----------|----------|
+| `acquire_lock()` | `lock_file_path: str, timeout: int=600` | `bool` | 获取文件锁，防止重复执行，默认超时10分钟 |
+| `release_lock()` | `lock_file_path: str` | `None` | 释放文件锁 |
+| `process_tasks()` | 无 | `None` | 主要处理函数，处理待处理任务队列 |
+| `main()` | 无 | `None` | 脚本入口函数，设置日志和执行任务处理 |
+
+**特性**：
+- **文件锁机制**：使用`.lock`文件防止多个实例同时运行
+- **超时保护**：10分钟超时自动清理死锁
+- **详细日志**：记录处理过程、成功/失败统计
+- **错误处理**：捕获并记录所有异常
+- **性能统计**：记录处理时间和任务数量
+
+## 函数列表
+
+### 后端API接口层
+
+#### 文件管理API (backend/app/api/files.py)
+
+| 函数名 | 传入参数 | 传出参数 | 功能说明 |
+|--------|----------|----------|----------|
+| `create_file_api()` | `file: FileCreate, fast_mode: bool=False` | `FileResponse` | 创建新文件（支持快速模式，快速模式时后台异步处理索引） |
+| `read_files_api()` | `skip: int=0, limit: int=100, include_deleted: bool=False` | `List[FileResponse]` | 分页获取文件列表 |
+| `read_file_by_path_api()` | `file_path: str` | `FileResponse` | 根据文件路径读取文件（支持从磁盘自动导入） |
+| `get_file_tree_api()` | `root_path: str="notes"` | `List[Dict]` | 获取目录树结构 |
+| `create_directory_api()` | `request: dict{"path": str}` | `Dict{"success": bool, "message": str}` | 创建新目录 |
+| `search_files_api()` | `q: str, search_type: str="mixed", limit: int=50, similarity_threshold: float=0.7` | `SearchResponse` | 统一搜索接口，支持关键词、语义和混合搜索 |
+| `get_search_history_api()` | `limit: int=20` | `Dict{"history": List[SearchHistory]}` | 获取用户搜索历史记录 |
+| `get_popular_queries_api()` | `limit: int=10` | `Dict{"popular_queries": List[PopularQuery]}` | 获取最常用的搜索查询统计 |
+| `move_file_api()` | `request: dict{"source_path": str, "destination_path": str}` | `Dict{"success": bool, "message": str}` | 移动文件或目录 |
+| `read_file_api()` | `file_id: int` | `FileResponse` | 根据文件ID读取文件信息 |
+| `update_file_api()` | `file_id: int, file: FileUpdate, fast_mode: bool=False` | `FileResponse` | 更新文件内容（支持快速模式，快速模式时后台异步处理索引） |
+| `update_file_by_path_api()` | `file_path: str, file: FileUpdate, fast_mode: bool=False` | `FileResponse` | 根据路径更新文件内容（支持快速模式） |
+| `delete_file_api()` | `file_id: int` | `None` | 软删除文件 |
+
+#### AI功能API (backend/app/api/ai.py)
+
+| 函数名 | 传入参数 | 传出参数 | 功能说明 |
+|--------|----------|----------|----------|
+| `generate_summary_api()` | `request: SummaryRequest{content: str, max_length: int=200}` | `Dict{"summary": str}` | 使用AI生成文档摘要 |
+| `suggest_tags_api()` | `request: TagSuggestionRequest{title: str, content: str, max_tags: int=5}` | `Dict{"tags": List[str]}` | 基于内容智能推荐标签 |
+| `create_embeddings_api()` | `file_id: int` | `Dict{"success": bool, "message": str}` | 为指定文件创建向量嵌入 |
+# AI笔记本项目
+
+## 项目简介
+
+AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在为用户提供安全、私密且智能的笔记管理体验。
+
+### 核心特性
+
+- 🔒 **纯本地运行**：所有数据存储在本地，确保隐私安全
+- 📝 **Markdown格式**：使用标准Markdown格式，数据可移植性强
+- 🤖 **AI智能问答**：基于本地LLM的RAG问答系统
+- 💬 **智能对话**：AI助手基于笔记内容回答问题，支持上下文理解
+- 🐳 **容器化部署**：一键启动，简化安装和运行
+- 🕸️ **链接可视化**：双向链接网络图谱和关系展示
+- 🔗 **双向链接**：支持笔记间的双向链接和关系可视化
+- 🔍 **智能搜索**：支持关键词、语义和混合搜索，带搜索历史
+- 📁 **智能文件管理**：文件树状视图，支持拖拽移动、右键菜单操作
+- ✨ **自动保存**：实时自动保存编辑内容，支持Ctrl+S快捷键
+
+### 最新功能更新
+
+#### 🏷️ 标签界面优化 (2025-07-03)
+- **界面简化**：标签页面采用最小化设计原则，提升用户体验
+- **功能分离**：
+  - **当前文件标签**：保留在主界面，便于快速管理当前文件的标签
+  - **全局标签管理**：移至独立弹窗，通过"设置全局标签"按钮访问
+- **弹窗管理**：全局标签管理弹窗包含完整功能：
+  - 标签统计信息（总数、活跃、未使用、AI建议）
+  - 标签搜索和过滤功能
+  - 新建、编辑、删除标签操作
+  - 完整的标签列表表格视图
+- **用户体验优化**：界面更清爽，功能更聚焦，操作更直观
+- **响应式设计**：弹窗采用大尺寸设计(1200px)，提供充足的操作空间
+
 #### 🤖 AI智能问答系统 (2025-01-01)
 - **RAG问答功能**：基于检索增强生成(RAG)的智能问答，AI会先搜索相关笔记，再基于内容回答问题
 - **上下文理解**：AI助手能理解问题并从笔记库中检索最相关的内容作为回答依据
@@ -58,14 +758,6 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 - **智能切换保存**：文件切换时自动保存未保存的修改，避免数据丢失
 - **任务重试机制**：后台任务支持失败重试，最多重试3次
 - **任务状态跟踪**：完整的任务状态管理（待处理/处理中/已完成/失败）
-
-#### 🏷️ 标签和链接功能完成 (2025-01-01)
-- **智能标签管理**：支持手动创建和AI自动生成标签，颜色自定义
-- **文件标签关联**：为文件添加/移除标签，标签数量统计和可视化
-- **双向链接系统**：完整的链接CRUD操作，支持多种链接类型
-- **智能链接发现**：AI分析文件内容，自动发现相关文档并建议链接关系
-- **编辑器集成**：右侧抽屉式管理界面，与编辑器无缝集成
-- **链接可视化**：显示出链和入链，链接方向图标和颜色区分
 
 #### 🗄️ 数据库结构优化 (2025-01-01)
 - **冗余字段清理**：移除files表中的冗余tags字段，避免数据不一致
@@ -958,12 +1650,23 @@ uvicorn main:app --reload
 - `CHROMA_DB_PATH` - ChromaDB向量数据库路径，默认：`./data/chroma_db`
 
 #### AI模型配置
+
+##### 语言模型配置
 - `OPENAI_API_KEY` - OpenAI API密钥，设置为`ollama`表示使用本地Ollama服务
 - `OPENAI_BASE_URL` - OpenAI API基础URL，默认：`http://host.docker.internal:11434`（Docker容器访问宿主机Ollama服务）
-- `EMBEDDING_MODEL_NAME` - 嵌入模型名称，默认：`quentinz/bge-large-zh-v1.5:latest`（BGE中文嵌入模型）
 - `OPENAI_MODEL` - LLM模型名称，默认：`qwen2.5:0.5b`
 - `LLM_TEMPERATURE` - 生成温度，默认：`0.7`
 - `LLM_MAX_TOKENS` - 最大生成token数，默认：`2048`
+
+##### 嵌入模型配置（支持独立配置）
+- `EMBEDDING_MODEL_NAME` - 嵌入模型名称，默认：`quentinz/bge-large-zh-v1.5:latest`（BGE中文嵌入模型）
+- `EMBEDDING_BASE_URL` - 嵌入模型专用API地址，为空时使用`OPENAI_BASE_URL`
+- `EMBEDDING_API_KEY` - 嵌入模型专用API密钥，为空时使用`OPENAI_API_KEY`
+
+**灵活配置示例**：
+- **统一服务商**：只配置`OPENAI_*`变量，嵌入模型会自动使用相同配置
+- **混合服务商**：语言模型用OpenAI（高性能），嵌入模型用本地Ollama（节省成本）
+- **完全分离**：语言模型和嵌入模型使用不同的服务商和API密钥
 
 #### 文件存储配置
 - `MAX_FILE_SIZE` - 最大文件大小（字节），默认：`10485760`（10MB）

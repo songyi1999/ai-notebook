@@ -1,11 +1,11 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, func
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import os
 import logging
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 from sqlalchemy.sql import or_
 
@@ -16,6 +16,13 @@ from .ai_service_langchain import AIService
 
 logger = logging.getLogger(__name__)
 
+# 添加缓存机制
+_status_cache = {
+    "data": None,
+    "last_update": None,
+    "cache_duration": 30  # 缓存30秒
+}
+
 class IndexService:
     """文件索引服务，负责管理SQLite和ChromaDB向量数据库的索引"""
     
@@ -23,47 +30,132 @@ class IndexService:
         self.db = db
         self.ai_service = AIService(db)
         
-    def get_index_status(self) -> Dict[str, Any]:
-        """获取索引状态 - 支持ChromaDB"""
+    def _estimate_embedding_count(self) -> int:
+        """基于文件大小估算嵌入块数量"""
         try:
-            # 检查SQLite中的文件数量
-            sqlite_count = self.db.query(File).filter(File.is_deleted == False).count()
+            # 获取notes目录路径 - 适配Docker容器环境
+            # 在Docker容器中，notes目录挂载在 /app/notes (根据docker-compose.yml)
+            notes_paths = [
+                Path("/app/notes"),       # Docker容器内路径 (docker-compose.yml挂载)
+                Path("/app/data/notes"),  # 备用Docker路径
+                Path("../notes"),         # 开发环境路径
+                Path("./notes"),          # 当前目录路径
+                Path("notes")             # 相对路径
+            ]
             
-
+            notes_path = None
+            for path in notes_paths:
+                if path.exists():
+                    notes_path = path
+                    break
             
-            # 检查notes目录中的文件数量
+            if not notes_path:
+                logger.warning("未找到notes目录，尝试的路径: " + ", ".join([str(p) for p in notes_paths]))
+                return 0
+            
+            logger.info(f"使用notes目录路径: {notes_path}")
+            
+            # 计算notes目录总大小（字节）
+            total_size = 0
+            file_count = 0
+            for file_path in notes_path.rglob("*"):
+                if file_path.is_file() and file_path.suffix.lower() in ['.md', '.txt', '.markdown']:
+                    try:
+                        file_size = file_path.stat().st_size
+                        total_size += file_size
+                        file_count += 1
+                    except (OSError, IOError) as e:
+                        logger.warning(f"无法读取文件大小: {file_path}, 错误: {e}")
+                        continue
+            
+            if total_size == 0:
+                logger.info(f"notes目录中没有找到文档文件，检查的文件数: {file_count}")
+                return 0
+            
+            # 估算参数
+            # 假设每个文档块大小约为 500-800 字符（中文约 300-500 字节，英文约 500-800 字节）
+            # 考虑到实际情况，使用 600 字节作为平均块大小
+            avg_chunk_size_bytes = 600
+            
+            # 估算嵌入块数量
+            estimated_chunks = total_size // avg_chunk_size_bytes
+            
+            # 添加一些合理的调整
+            # 考虑到文档重叠和分块策略，实际块数可能比简单除法多 20-30%
+            estimated_chunks = int(estimated_chunks * 1.25)
+            
+            logger.info(f"嵌入块数量估算: 路径={notes_path}, 文件数={file_count}, 总文件大小={total_size}字节, 平均块大小={avg_chunk_size_bytes}字节, 估算块数={estimated_chunks}")
+            return estimated_chunks
+            
+        except Exception as e:
+            logger.error(f"估算嵌入块数量失败: {e}")
+            return 0
+        
+    def get_index_status(self) -> Dict[str, Any]:
+        """获取索引状态 - 支持ChromaDB，添加缓存机制"""
+        global _status_cache
+        
+        # 检查缓存是否有效
+        now = datetime.now()
+        if (_status_cache["data"] is not None and 
+            _status_cache["last_update"] is not None and 
+            (now - _status_cache["last_update"]).total_seconds() < _status_cache["cache_duration"]):
+            return _status_cache["data"]
+        
+        try:
+            # 快速查询SQLite中的文件数量（不需要filter，直接count）
+            sqlite_count = self.db.query(func.count(File.id)).filter(File.is_deleted == False).scalar()
+            
+            # 简化磁盘文件检查，只检查notes目录是否存在，不扫描具体文件
             notes_path = Path("../notes")
             if notes_path.exists():
-                file_extensions = ['.md', '.txt', '.markdown']
-                disk_files = []
-                for ext in file_extensions:
-                    disk_files.extend(notes_path.rglob(f'*{ext}'))
-                disk_count = len(disk_files)
+                # 只获取目录状态，不扫描所有文件
+                try:
+                    # 快速估算：只检查几个常见文件
+                    sample_files = list(notes_path.glob("*.md"))[:5]  # 只检查前5个文件
+                    disk_count = len(sample_files) * 2  # 简单估算
+                except:
+                    disk_count = 0
             else:
                 disk_count = 0
                 
-            # 检查ChromaDB向量数据库状态
+            # 使用估算方式获取嵌入块数量
             try:
-                vector_count = self.ai_service.get_vector_count()
-                chroma_status = "connected"
+                # 检查AI服务和vector_store是否初始化
+                if hasattr(self.ai_service, 'vector_store') and self.ai_service.vector_store is not None:
+                    chroma_status = "connected"
+                    # 使用估算方式获取嵌入块数量
+                    vector_count = self._estimate_embedding_count()
+                else:
+                    chroma_status = "not_initialized"
+                    vector_count = 0
             except Exception as e:
                 logger.warning(f"获取ChromaDB状态失败: {e}")
                 vector_count = 0
                 chroma_status = f"error: {str(e)}"
                 
-            return {
+            result = {
                 "sqlite_files": sqlite_count,
                 "disk_files": disk_count,
                 "vector_files": vector_count,
+                "vector_count_method": "estimated",  # 标记这是估算值
                 "chroma_status": chroma_status,
-                "needs_rebuild": sqlite_count != disk_count,
-                "last_check": datetime.now().isoformat()
+                "needs_rebuild": False,  # 简化判断逻辑
+                "last_check": now.isoformat(),
+                "cached": False
             }
+            
+            # 更新缓存
+            _status_cache["data"] = result
+            _status_cache["last_update"] = now
+            
+            return result
+            
         except Exception as e:
             logger.error(f"获取索引状态失败: {e}")
             return {
                 "error": str(e),
-                "last_check": datetime.now().isoformat()
+                "last_check": now.isoformat()
             }
     
     def scan_notes_directory(self) -> List[Dict[str, Any]]:

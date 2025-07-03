@@ -102,8 +102,8 @@ class ChromaDBManager:
                         # 初始化嵌入模型
                         if self._embeddings is None:
                             self._embeddings = OpenAICompatibleEmbeddings(
-                                base_url=settings.openai_base_url,
-                                api_key=settings.openai_api_key,
+                                base_url=settings.get_embedding_base_url(),
+                                api_key=settings.get_embedding_api_key(),
                                 model=settings.embedding_model_name
                             )
                         
@@ -157,8 +157,8 @@ class AIService:
         
         # 初始化嵌入模型
         self.embeddings = OpenAICompatibleEmbeddings(
-            base_url=self.openai_base_url,
-            api_key=self.openai_api_key,
+            base_url=settings.get_embedding_base_url(),
+            api_key=settings.get_embedding_api_key(),
             model=settings.embedding_model_name
         )
         
@@ -410,11 +410,34 @@ class AIService:
             return False
 
     def get_vector_count(self) -> int:
-        """获取向量数据库中的向量数量"""
+        """获取向量数据库中的向量数量 - 优化版本，避免获取所有数据"""
         try:
             if self.vector_store:
-                all_docs = self.vector_store.get()
-                return len(all_docs.get('ids', [])) if all_docs else 0
+                # 使用ChromaDB的count方法，避免获取所有数据
+                try:
+                    # 尝试使用ChromaDB的内部方法获取数量
+                    collection = self.vector_store._collection
+                    if hasattr(collection, 'count'):
+                        return collection.count()
+                    elif hasattr(collection, '_count'):
+                        return collection._count()
+                    else:
+                        # 如果没有直接的count方法，使用limit=1的查询来检查是否有数据
+                        # 这样避免获取所有数据
+                        sample = self.vector_store.get(limit=1)
+                        if sample and sample.get('ids'):
+                            # 有数据但无法获取精确数量，返回估算值
+                            return -1  # 使用-1表示"有数据但数量未知"
+                        else:
+                            return 0
+                except Exception as e:
+                    logger.warning(f"无法获取精确向量数量: {e}")
+                    # 降级方案：尝试简单查询检查是否有数据
+                    try:
+                        sample = self.vector_store.get(limit=1)
+                        return -1 if sample and sample.get('ids') else 0
+                    except:
+                        return 0
             return 0
         except Exception as e:
             logger.error(f"获取向量数量失败: {e}")

@@ -1,7 +1,9 @@
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from sqlalchemy import func
+from typing import List, Optional, Dict, Any
 from ..models.tag import Tag
 from ..models.file_tag import FileTag
+from ..models.file import File
 from ..schemas.tag import TagCreate, TagUpdate, FileTagCreate
 import logging
 
@@ -44,6 +46,60 @@ class TagService:
         """获取所有标签"""
         return self.db.query(Tag).offset(skip).limit(limit).all()
 
+    def get_tags_with_usage_stats(self, skip: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
+        """获取带使用统计的标签列表"""
+        try:
+            # 查询标签及其使用次数
+            query = self.db.query(
+                Tag,
+                func.count(FileTag.file_id).label('usage_count')
+            ).outerjoin(FileTag, Tag.id == FileTag.tag_id)\
+             .group_by(Tag.id)\
+             .offset(skip)\
+             .limit(limit)
+            
+            results = query.all()
+            
+            tags_with_stats = []
+            for tag, usage_count in results:
+                # 获取最近使用的文件（最多5个）
+                recent_files_query = self.db.query(File.title)\
+                    .join(FileTag, File.id == FileTag.file_id)\
+                    .filter(FileTag.tag_id == tag.id)\
+                    .order_by(FileTag.created_at.desc())\
+                    .limit(5)
+                
+                recent_files = [file.title for file in recent_files_query.all()]
+                
+                tag_dict = {
+                    'id': tag.id,
+                    'name': tag.name,
+                    'color': tag.color,
+                    'description': tag.description,
+                    'is_auto_generated': tag.is_auto_generated,
+                    'created_at': tag.created_at,
+                    'updated_at': tag.updated_at,
+                    'usage_count': usage_count or 0,
+                    'recent_files': recent_files
+                }
+                tags_with_stats.append(tag_dict)
+            
+            logger.info(f"获取带统计的标签列表成功，共 {len(tags_with_stats)} 个标签")
+            return tags_with_stats
+            
+        except Exception as e:
+            logger.error(f"获取带统计的标签列表失败: {e}")
+            raise
+
+    def get_tag_usage_count(self, tag_id: int) -> int:
+        """获取单个标签的使用次数"""
+        try:
+            count = self.db.query(FileTag).filter(FileTag.tag_id == tag_id).count()
+            return count
+        except Exception as e:
+            logger.error(f"获取标签使用次数失败: {e}")
+            return 0
+
     def update_tag(self, tag_id: int, tag_update: TagUpdate) -> Optional[Tag]:
         """更新标签"""
         try:
@@ -75,6 +131,13 @@ class TagService:
             if db_tag is None:
                 return None
             
+            # 先删除所有相关的文件标签关联记录
+            from ..models.file_tag import FileTag
+            file_tags_count = self.db.query(FileTag).filter(FileTag.tag_id == tag_id).count()
+            self.db.query(FileTag).filter(FileTag.tag_id == tag_id).delete()
+            logger.info(f"删除标签关联记录: tag_id={tag_id}, count={file_tags_count}")
+            
+            # 然后删除标签本身
             self.db.delete(db_tag)
             self.db.commit()
             logger.info(f"删除标签成功: {tag_id}")
