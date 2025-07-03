@@ -1,15 +1,63 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Input, Space, message, Tabs, Typography, Spin, Divider } from 'antd';
-import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { Button, Input, Space, message, Tabs, Typography, Spin, Divider, Modal } from 'antd';
+import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
-import { apiClient, SystemStatus } from '../services/api';
+import { apiClient, SystemStatus, search } from '../services/api';
+import TagManager from './TagManager';
+import AutoProcessor from './AutoProcessor';
+import LinkGraph from './LinkGraph';
 
 const { Text } = Typography;
 
-// 初始化 Markdown 解析器
+// 双向链接的markdown-it插件
+function wikiLinkPlugin(md: MarkdownIt) {
+  md.inline.ruler.before('link', 'wikilink', function(state, silent) {
+    const start = state.pos;
+    const max = state.posMax;
+    
+    // 检查是否以[[开头
+    if (start + 4 >= max) return false;
+    if (state.src.slice(start, start + 2) !== '[[') return false;
+    
+    // 查找结束标记]]
+    let pos = start + 2;
+    let found = false;
+    while (pos < max - 1) {
+      if (state.src.slice(pos, pos + 2) === ']]') {
+        found = true;
+        break;
+      }
+      pos++;
+    }
+    
+    if (!found) return false;
+    
+    // 提取链接文本
+    const linkText = state.src.slice(start + 2, pos);
+    if (!linkText.trim()) return false;
+    
+    if (!silent) {
+      const token = state.push('wikilink', '', 0);
+      token.content = linkText.trim();
+      token.markup = '[[]]';
+    }
+    
+    state.pos = pos + 2;
+    return true;
+  });
+  
+  md.renderer.rules.wikilink = function(tokens, idx) {
+    const token = tokens[idx];
+    const linkText = token.content;
+    // 确保包含正确的CSS类和data属性
+    return `<a href="#" class="wiki-link" data-link-target="${linkText.replace(/"/g, '&quot;')}">${linkText}</a>`;
+  };
+}
+
+// 初始化 Markdown 解析器并添加双向链接插件
 const md = new MarkdownIt({
   html: true,
   linkify: true,
@@ -22,7 +70,7 @@ const md = new MarkdownIt({
     }
     return '';
   }
-});
+}).use(wikiLinkPlugin);
 
 interface NoteFile {
   id?: number;
@@ -117,6 +165,93 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   useEffect(() => {
     isModifiedRef.current = isModified;
   }, [isModified]);
+
+  // 处理双向链接点击
+  const handleWikiLinkClick = useCallback(async (linkTarget: string) => {
+    try {
+      // 首先通过搜索API查找文件
+      const searchResults = await search(linkTarget, 'keyword', 10);
+      
+      // 查找完全匹配的文件
+      let targetFile = searchResults.results.find(result => 
+        result.title.toLowerCase() === linkTarget.toLowerCase() ||
+        result.file_path.toLowerCase().includes(linkTarget.toLowerCase())
+      );
+      
+      if (targetFile) {
+        // 如果找到文件，跳转到该文件
+        if (onFileChange) {
+          onFileChange(targetFile.file_path, targetFile.title);
+        }
+        message.success(`已跳转到文件: ${targetFile.title}`);
+      } else {
+        // 如果没找到文件，询问用户是否创建
+        Modal.confirm({
+          title: '文件不存在',
+          icon: <ExclamationCircleOutlined />,
+          content: `文件 "${linkTarget}" 不存在，是否创建新文件？`,
+          okText: '创建',
+          cancelText: '取消',
+          onOk: async () => {
+            try {
+              // 创建新文件
+              const newFilePath = `notes/${linkTarget}.md`;
+              const newFile = await apiClient.createFile({
+                title: linkTarget,
+                content: `# ${linkTarget}\n\n`,
+                file_path: newFilePath,
+                parent_folder: 'notes'
+              });
+              
+              // 跳转到新创建的文件
+              if (onFileChange) {
+                onFileChange(newFile.file_path, newFile.title);
+              }
+              message.success(`已创建并跳转到新文件: ${linkTarget}`);
+            } catch (error) {
+              console.error('创建文件失败:', error);
+              message.error('创建文件失败');
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.error('查找文件失败:', error);
+      message.error('查找文件失败');
+    }
+  }, [onFileChange]);
+
+  // 设置点击事件监听器
+  const previewRef = useRef<HTMLDivElement>(null);
+  
+  useEffect(() => {
+    const previewElement = previewRef.current;
+    if (!previewElement) return;
+    
+    const handleClick = (e: Event) => {
+      const target = e.target as HTMLElement;
+      console.log('Click detected on:', target, 'Classes:', target.classList.toString());
+      
+      if (target.classList.contains('wiki-link')) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const linkTarget = target.getAttribute('data-link-target');
+        console.log('Wiki link clicked:', linkTarget);
+        
+        if (linkTarget) {
+          handleWikiLinkClick(linkTarget);
+        }
+      }
+    };
+    
+    // 使用事件委托，监听所有点击事件
+    previewElement.addEventListener('click', handleClick, true);
+    
+    return () => {
+      previewElement.removeEventListener('click', handleClick, true);
+    };
+  }, [handleWikiLinkClick, activeTab]); // 添加activeTab依赖，确保在切换标签时重新设置监听器
 
   // 加载文件内容
   const loadFileContent = async (filePath: string) => {
@@ -365,10 +500,8 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   };
 
   // 渲染Markdown预览
-  const renderMarkdown = () => {
-    return {
-      __html: md.render(currentNote.content || '')
-    };
+  const renderMarkdown = (content: string) => {
+    return md.render(content || '');
   };
 
   // 渲染保存状态
@@ -557,15 +690,78 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
               ),
               children: (
                 <div 
-                  className="markdown-body"
+                  ref={previewRef}
+                  className="markdown-preview" 
                   style={{ 
-                    height: '100%',
+                    height: '100%', 
                     overflow: 'auto', 
-                    padding: '16px'
-                  }} 
-                  dangerouslySetInnerHTML={renderMarkdown()} 
+                    padding: '16px',
+                    backgroundColor: '#fff'
+                  }}
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(currentNote.content) }}
                 />
               ),
+            },
+            {
+              key: 'tags',
+              label: (
+                <span>
+                  <TagOutlined />
+                  标签
+                </span>
+              ),
+              children: (
+                <TagManager
+                  currentFileId={currentNote.id}
+                  currentFileTitle={currentNote.title}
+                  currentFileContent={currentNote.content}
+                  onTagsChange={(tags) => {
+                    // 这里可以处理标签变化的逻辑
+                    console.log('标签已更新:', tags);
+                  }}
+                />
+              )
+            },
+            {
+              key: 'auto',
+              label: (
+                <span>
+                  <RobotOutlined />
+                  AI处理
+                </span>
+              ),
+              children: (
+                <AutoProcessor
+                  currentFileId={currentNote.id}
+                  onProcessingComplete={(results) => {
+                    // 处理完成后的回调
+                    console.log('AI处理完成:', results);
+                    message.success(`AI处理完成！处理了 ${results.length} 个文件`);
+                  }}
+                />
+              )
+            },
+            {
+              key: 'graph',
+              label: (
+                <span>
+                  <ShareAltOutlined />
+                  图谱
+                </span>
+              ),
+              children: (
+                <LinkGraph
+                  currentFileId={currentNote.id}
+                  onNodeClick={(_, filePath) => {
+                    // 处理节点点击事件，跳转到对应文件
+                    if (onFileChange) {
+                      const fileName = filePath.split('/').pop() || '';
+                      onFileChange(filePath, fileName);
+                    }
+                    message.success(`已跳转到文件: ${filePath}`);
+                  }}
+                />
+              )
             }
           ]}
         />
