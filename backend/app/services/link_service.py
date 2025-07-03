@@ -10,7 +10,21 @@ class LinkService:
         self.db = db
 
     def create_link(self, link: LinkCreate) -> Link:
-        db_link = Link(**link.dict())
+        # 如果没有提供link_text，自动生成一个
+        link_data = link.dict()
+        if not link_data.get('link_text'):
+            # 尝试获取目标文件的标题作为link_text
+            if link_data.get('target_file_id'):
+                target_file = self.db.query(File).filter(File.id == link_data['target_file_id']).first()
+                if target_file:
+                    link_data['link_text'] = f"[[{target_file.title or target_file.file_path.split('/')[-1]}]]"
+                else:
+                    link_data['link_text'] = f"链接到文件ID: {link_data['target_file_id']}"
+            else:
+                # 如果没有目标文件ID，使用链接类型作为默认文本
+                link_data['link_text'] = f"{link_data.get('link_type', 'unknown')} 链接"
+        
+        db_link = Link(**link_data)
         self.db.add(db_link)
         self.db.commit()
         self.db.refresh(db_link)
