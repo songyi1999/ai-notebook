@@ -9,6 +9,17 @@ AI笔记本项目使用 **SQLite** 作为主数据库，配合 **ChromaDB** 作�
 - **性能**：优化查询性能和索引设计
 - **一致性**：保证数据完整性和一致性
 
+## 数据库架构
+
+### 双存储架构
+- **SQLite**：存储文件元数据、链接关系、标签、聊天记录等结构化数据
+- **ChromaDB**：存储文档向量嵌入，由LangChain-Chroma自动管理
+
+### 数据库文件位置
+- SQLite数据库：`./data/ai_notebook.db`
+- ChromaDB目录：`./data/chroma_db/`
+- 笔记文件目录：`./notes/`
+
 ## 核心数据表
 
 ### 1. files (文件表)
@@ -17,26 +28,25 @@ AI笔记本项目使用 **SQLite** 作为主数据库，配合 **ChromaDB** 作�
 
 ```sql
 CREATE TABLE files (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_path TEXT NOT NULL UNIQUE,           -- 文件路径（相对路径）
-    title TEXT NOT NULL,                      -- 文件标题
-    content TEXT,                             -- 文件内容（Markdown格式）
-    content_hash TEXT,                        -- 内容哈希值，用于检测变更
-    file_size INTEGER DEFAULT 0,             -- 文件大小（字节）
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_deleted BOOLEAN DEFAULT FALSE,         -- 软删除标记
-    parent_folder TEXT,                       -- 父文件夹路径
-    tags TEXT,                                -- 标签（JSON格式）
-    metadata TEXT                             -- 其他元数据（JSON格式）
+    id INTEGER PRIMARY KEY,
+    file_path VARCHAR NOT NULL UNIQUE,       -- 文件路径（相对路径）
+    title VARCHAR NOT NULL,                  -- 文件标题
+    content TEXT,                            -- 文件内容（Markdown格式）
+    content_hash VARCHAR,                    -- 内容哈希值，用于检测变更
+    file_size INTEGER DEFAULT 0,            -- 文件大小（字节）
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_deleted BOOLEAN DEFAULT FALSE,        -- 软删除标记
+    parent_folder VARCHAR,                   -- 父文件夹路径
+    tags JSON,                               -- 标签（JSON格式）
+    file_metadata JSON                       -- 其他元数据（JSON格式）
 );
 
 -- 索引
-CREATE INDEX idx_files_file_path ON files(file_path);
-CREATE INDEX idx_files_created_at ON files(created_at);
-CREATE INDEX idx_files_updated_at ON files(updated_at);
-CREATE INDEX idx_files_parent_folder ON files(parent_folder);
-CREATE INDEX idx_files_is_deleted ON files(is_deleted);
+CREATE UNIQUE INDEX ix_files_file_path ON files(file_path);
+CREATE INDEX ix_files_id ON files(id);
+CREATE INDEX ix_files_is_deleted ON files(is_deleted);
+CREATE INDEX ix_files_parent_folder ON files(parent_folder);
 ```
 
 **字段说明：**
@@ -53,14 +63,14 @@ CREATE INDEX idx_files_is_deleted ON files(is_deleted);
 
 ```sql
 CREATE TABLE links (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     source_file_id INTEGER NOT NULL,         -- 源文件ID
     target_file_id INTEGER,                  -- 目标文件ID（可能为空，表示链接到不存在的文件）
     link_text TEXT NOT NULL,                 -- 链接文本（如 [[目标文件]]）
-    link_type TEXT DEFAULT 'wikilink',       -- 链接类型：wikilink, external, image等
+    link_type VARCHAR DEFAULT 'wikilink',    -- 链接类型：wikilink, external, image等
     position_start INTEGER,                  -- 链接在源文件中的起始位置
     position_end INTEGER,                    -- 链接在源文件中的结束位置
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_valid BOOLEAN DEFAULT TRUE,           -- 链接是否有效
     
     FOREIGN KEY (source_file_id) REFERENCES files(id) ON DELETE CASCADE,
@@ -68,10 +78,11 @@ CREATE TABLE links (
 );
 
 -- 索引
-CREATE INDEX idx_links_source_file ON links(source_file_id);
-CREATE INDEX idx_links_target_file ON links(target_file_id);
-CREATE INDEX idx_links_type ON links(link_type);
-CREATE INDEX idx_links_is_valid ON links(is_valid);
+CREATE INDEX ix_links_id ON links(id);
+CREATE INDEX ix_links_source_file_id ON links(source_file_id);
+CREATE INDEX ix_links_target_file_id ON links(target_file_id);
+CREATE INDEX ix_links_link_type ON links(link_type);
+CREATE INDEX ix_links_is_valid ON links(is_valid);
 ```
 
 **字段说明：**
@@ -85,23 +96,23 @@ CREATE INDEX idx_links_is_valid ON links(is_valid);
 
 ```sql
 CREATE TABLE embeddings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     file_id INTEGER NOT NULL,                -- 关联的文件ID
     chunk_index INTEGER NOT NULL,            -- 文本块在文件中的索引
     chunk_text TEXT NOT NULL,                -- 文本块内容
-    chunk_hash TEXT NOT NULL,                -- 文本块哈希值
+    chunk_hash VARCHAR NOT NULL,             -- 文本块哈希值
     embedding_vector BLOB,                   -- 向量数据（二进制格式）
-    vector_model TEXT NOT NULL,              -- 使用的嵌入模型名称
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    vector_model VARCHAR NOT NULL,           -- 使用的嵌入模型名称
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     
     FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
     UNIQUE(file_id, chunk_index)
 );
 
 -- 索引
-CREATE INDEX idx_embeddings_file_id ON embeddings(file_id);
-CREATE INDEX idx_embeddings_chunk_hash ON embeddings(chunk_hash);
-CREATE INDEX idx_embeddings_model ON embeddings(vector_model);
+CREATE INDEX ix_embeddings_id ON embeddings(id);
+CREATE INDEX ix_embeddings_file_id ON embeddings(file_id);
+CREATE INDEX ix_embeddings_vector_model ON embeddings(vector_model);
 ```
 
 **字段说明：**
@@ -230,23 +241,54 @@ CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 
 ```sql
 CREATE TABLE system_config (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    config_key TEXT NOT NULL UNIQUE,         -- 配置键
+    id INTEGER PRIMARY KEY,
+    config_key VARCHAR NOT NULL UNIQUE,      -- 配置键
     config_value TEXT,                       -- 配置值
-    config_type TEXT DEFAULT 'string',       -- 配置类型：string, integer, boolean, json
+    config_type VARCHAR DEFAULT 'string',    -- 配置类型：string, integer, boolean, json
     description TEXT,                        -- 配置描述
     is_encrypted BOOLEAN DEFAULT FALSE,      -- 是否加密存储
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 索引
-CREATE INDEX idx_system_config_key ON system_config(config_key);
+CREATE INDEX ix_system_config_id ON system_config(id);
+CREATE UNIQUE INDEX ix_system_config_config_key ON system_config(config_key);
 ```
 
-### 10. 搜索功能说明
+### 10. pending_tasks (待处理任务表)
 
-关键词搜索现在使用SQLite的LIKE操作符进行模糊匹配，支持标题和内容的全文搜索。
+存储后台处理任务的队列信息。
+
+```sql
+CREATE TABLE pending_tasks (
+    id INTEGER PRIMARY KEY,
+    file_id INTEGER NOT NULL,                -- 关联的文件ID
+    file_path VARCHAR(500) NOT NULL,         -- 文件路径
+    task_type VARCHAR(50) NOT NULL,          -- 任务类型：vector_index, fts_index
+    status VARCHAR(20) DEFAULT 'pending',    -- 任务状态：pending, processing, completed, failed
+    priority INTEGER DEFAULT 0,              -- 任务优先级，数字越大优先级越高
+    retry_count INTEGER DEFAULT 0,           -- 重试次数
+    max_retries INTEGER DEFAULT 3,           -- 最大重试次数
+    error_message TEXT,                      -- 错误信息
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    processed_at DATETIME                    -- 处理完成时间
+);
+
+-- 索引
+CREATE INDEX ix_pending_tasks_id ON pending_tasks(id);
+```
+
+**字段说明：**
+- `task_type`: 任务类型，主要是 `vector_index`（向量索引）
+- `status`: 任务状态，支持待处理、处理中、完成、失败等状态
+- `priority`: 任务优先级，用于调度任务处理顺序
+
+## 搜索功能说明
+
+### 关键词搜索
+使用SQLite的LIKE操作符进行模糊匹配，支持标题和内容的全文搜索。
 
 ```sql
 -- 关键词搜索示例
@@ -262,79 +304,74 @@ LIMIT 50;
 - **模糊匹配**：支持部分关键词匹配
 - **性能适中**：对于中等规模数据集性能表现良好
 
-## 视图定义
+### 语义搜索
+通过ChromaDB存储和检索向量嵌入，由LangChain-Chroma自动管理。
 
-### 1. file_stats_view (文件统计视图)
+**特点：**
+- **语义理解**：基于文本语义而非字面匹配
+- **智能检索**：能理解同义词和相关概念
+- **向量存储**：使用高效的向量数据库
+- **自动管理**：向量的创建、更新、删除由系统自动处理
 
-```sql
-CREATE VIEW file_stats_view AS
-SELECT 
-    f.id,
-    f.file_path,
-    f.title,
-    f.created_at,
-    f.updated_at,
-    LENGTH(f.content) as content_length,
-    (LENGTH(f.content) - LENGTH(REPLACE(f.content, ' ', ''))) as word_count,
-    COUNT(DISTINCT l1.id) as outbound_links,
-    COUNT(DISTINCT l2.id) as inbound_links,
-    COUNT(DISTINCT ft.tag_id) as tags_count
-FROM files f
-LEFT JOIN links l1 ON f.id = l1.source_file_id AND l1.is_valid = TRUE
-LEFT JOIN links l2 ON f.id = l2.target_file_id AND l2.is_valid = TRUE
-LEFT JOIN file_tags ft ON f.id = ft.file_id
-WHERE f.is_deleted = FALSE
-GROUP BY f.id;
+## 数据库配置
+
+### SQLite配置
+```python
+# 数据库URL
+database_url = "sqlite:///./data/ai_notebook.db"
+
+# 连接配置
+PRAGMA foreign_keys = ON;          # 启用外键约束
+PRAGMA journal_mode = WAL;         # 启用WAL模式
+PRAGMA synchronous = NORMAL;       # 设置同步模式
+PRAGMA cache_size = 10000;         # 设置缓存大小
+PRAGMA temp_store = memory;        # 临时存储在内存
 ```
 
-### 2. tag_stats_view (标签统计视图)
+### ChromaDB配置
+```python
+# ChromaDB路径
+chroma_db_path = "./data/chroma_db"
 
-```sql
-CREATE VIEW tag_stats_view AS
-SELECT 
-    t.id,
-    t.name,
-    t.is_auto_generated,
-    COUNT(DISTINCT ft.file_id) as tagged_files_count,
-    AVG(ft.relevance_score) as avg_relevance_score,
-    t.usage_count
-FROM tags t
-LEFT JOIN file_tags ft ON t.id = ft.tag_id
-GROUP BY t.id;
+# 向量维度（取决于嵌入模型）
+embedding_dimension = 1536  # OpenAI text-embedding-ada-002
 ```
 
-## 数据库初始化脚本
+## 当前数据库状态
 
-```sql
--- 启用外键约束
-PRAGMA foreign_keys = ON;
+### 表统计信息
+- **files**: 13 条记录
+- **tags**: 0 条记录  
+- **links**: 0 条记录
+- **embeddings**: 数据由ChromaDB管理
+- **chat_sessions**: 0 条记录
+- **chat_messages**: 0 条记录
+- **pending_tasks**: 21 条记录
+- **search_history**: 0 条记录
+- **system_config**: 0 条记录
+- **file_tags**: 0 条记录
 
--- 设置日志模式
-PRAGMA journal_mode = WAL;
+### 索引统计
+- **用户定义索引**: 33 个
+- **视图**: 无
+- **触发器**: 无
 
--- 设置同步模式
-PRAGMA synchronous = NORMAL;
+## 后台任务处理
 
--- 设置缓存大小
-PRAGMA cache_size = 10000;
+### 任务队列机制
+系统使用 `pending_tasks` 表管理后台任务：
 
--- 设置临时存储
-PRAGMA temp_store = memory;
+1. **任务创建**：文件创建/修改时自动添加向量索引任务
+2. **任务处理**：后台线程定期处理待处理任务
+3. **状态跟踪**：实时跟踪任务执行状态和结果
+4. **错误处理**：支持任务重试和错误记录
+5. **优先级调度**：支持任务优先级排序
 
--- 创建所有表和索引
--- （在这里执行上述所有CREATE TABLE和CREATE INDEX语句）
-
--- 插入默认配置
-INSERT INTO system_config (config_key, config_value, config_type, description) VALUES
-('app_version', '0.1.0', 'string', '应用版本号'),
-('embedding_model', 'bge-m3', 'string', '默认嵌入模型'),
-('llm_model', 'llama3', 'string', '默认大语言模型'),
-('chunk_size', '1000', 'integer', '文本分块大小'),
-('chunk_overlap', '200', 'integer', '文本分块重叠大小'),
-('max_search_results', '20', 'integer', '最大搜索结果数'),
-('enable_auto_index', 'true', 'boolean', '是否启用自动索引'),
-('search_timeout', '30', 'integer', '搜索超时时间（秒）');
-```
+### 自动索引机制
+- **文件变更检测**：通过content_hash检测文件内容变化
+- **智能启动**：检查索引进程状态，按需启动后台处理
+- **避免重复**：使用文件锁机制防止重复执行
+- **非阻塞处理**：索引在独立线程中进行，不影响文件操作
 
 ## 数据迁移策略
 
@@ -427,4 +464,6 @@ sqlite3 notebook.db "PRAGMA integrity_check;"
 
 ---
 
-**注意**：这个数据库结构是基于当前需求设计的，在实际开发过程中可能会根据具体需求进行调整和优化。所有的结构变更都应该通过迁移脚本来管理，确保数据的一致性和完整性。 
+**注意**：这个数据库结构基于当前系统的实际实现，包含了完整的文件管理、链接关系、向量搜索、AI问答和后台任务处理功能。所有的结构变更都通过SQLAlchemy的ORM模型管理，确保数据的一致性和完整性。
+
+**更新时间**：2024年12月 
