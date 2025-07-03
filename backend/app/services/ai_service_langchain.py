@@ -17,6 +17,7 @@ from functools import lru_cache
 
 from ..models.file import File
 from ..models.embedding import Embedding
+from ..models.tag import Tag
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -487,32 +488,100 @@ class AIService:
             return None
 
     def suggest_tags(self, title: str, content: str, max_tags: int = 5) -> List[str]:
-        """智能标签建议"""
+        """智能标签建议 - 从预设和数据库现有标签中选择"""
         if not self.llm:
             logger.warning("LLM不可用，无法生成标签建议")
             return []
         
         try:
-            prompt = f"""基于以下文档的标题和内容，建议最多{max_tags}个相关的标签。
-标签应该简洁、准确，用中文表示。
+            # 1. 定义预设的常规标签
+            predefined_tags = [
+                "重点", "前端", "后端", "AI大模型", "技巧", 
+                "笔记", "总结", "教程", "文档", "配置",
+                "问题", "解决方案", "代码", "工具", "框架",
+                "数据库", "网络", "安全", "性能", "测试",
+                "部署", "运维", "算法", "架构", "设计",
+                "学习", "资源", "参考", "示例", "模板"
+            ]
+            
+            # 2. 从数据库获取现有的不重复标签
+            existing_tags = []
+            try:
+                # 使用 distinct 或 group by 获取不重复的标签名称，按使用次数降序排列
+                db_tags = self.db.query(Tag.name).filter(Tag.name.isnot(None)).distinct().order_by(Tag.usage_count.desc()).limit(50).all()
+                existing_tags = [tag.name for tag in db_tags if tag.name]
+                logger.info(f"从数据库获取到 {len(existing_tags)} 个现有标签")
+            except Exception as e:
+                logger.warning(f"获取数据库标签失败: {e}")
+            
+            # 3. 合并候选标签，去重并保持顺序
+            candidate_tags = []
+            seen = set()
+            
+            # 先添加预设标签
+            for tag in predefined_tags:
+                if tag not in seen:
+                    candidate_tags.append(tag)
+                    seen.add(tag)
+            
+            # 再添加数据库中的现有标签
+            for tag in existing_tags:
+                if tag not in seen:
+                    candidate_tags.append(tag)
+                    seen.add(tag)
+            
+            logger.info(f"总共有 {len(candidate_tags)} 个候选标签")
+            
+            # 4. 构建提示词，要求从候选标签中选择
+            candidate_tags_text = "、".join(candidate_tags)
+            
+            prompt = f"""请从以下候选标签中选择最多{max_tags}个最适合的标签来标记下面的文档。
 
+**候选标签列表：**
+{candidate_tags_text}
+
+**文档信息：**
 标题：{title}
 内容：{content[:1000]}
 
-请只返回标签列表，每行一个标签："""
+**要求：**
+1. 只能从上述候选标签列表中选择，不要创造新标签
+2. 选择最相关的{max_tags}个标签
+3. 标签要准确反映文档的主要内容和特征
+4. 每行返回一个标签名称
+
+**返回格式：**
+请只返回选中的标签，每行一个："""
             
             response = self.llm.invoke(prompt)
             tags_text = response.content.strip()
             
-            # 解析标签
-            tags = [tag.strip() for tag in tags_text.split('\n') if tag.strip()]
-            tags = tags[:max_tags]  # 限制数量
+            # 解析标签并验证
+            suggested_tags = [tag.strip() for tag in tags_text.split('\n') if tag.strip()]
             
-            logger.info(f"标签建议生成成功: {tags}")
-            return tags
+            # 过滤：只保留在候选标签中的标签
+            valid_tags = []
+            for tag in suggested_tags[:max_tags]:
+                if tag in candidate_tags:
+                    valid_tags.append(tag)
+                else:
+                    logger.warning(f"LLM返回了不在候选列表中的标签: {tag}")
+            
+            # 如果有效标签太少，从候选标签中补充一些通用标签
+            if len(valid_tags) < max_tags and len(valid_tags) < 3:
+                # 添加一些通用的后备标签
+                fallback_tags = ["笔记", "文档", "重点"]
+                for fallback in fallback_tags:
+                    if fallback in candidate_tags and fallback not in valid_tags and len(valid_tags) < max_tags:
+                        valid_tags.append(fallback)
+            
+            logger.info(f"标签建议生成成功: {valid_tags} (从 {len(candidate_tags)} 个候选标签中选择)")
+            return valid_tags
             
         except Exception as e:
             logger.error(f"生成标签建议失败: {e}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
             return []
 
     def analyze_content(self, content: str) -> Dict[str, Any]:
