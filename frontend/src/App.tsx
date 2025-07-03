@@ -1,6 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Layout, Button, Space, Tooltip } from 'antd';
-import { SearchOutlined, MenuFoldOutlined, MenuUnfoldOutlined, RobotOutlined } from '@ant-design/icons';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Layout, Button, Space, Tooltip, Menu } from 'antd';
+import { 
+  SearchOutlined, 
+  MenuFoldOutlined, 
+  MenuUnfoldOutlined, 
+  RobotOutlined,
+  FileTextOutlined
+} from '@ant-design/icons';
+import { useNavigate, useLocation } from 'react-router-dom';
 import NoteEditor from './components/NoteEditor';
 import FileTree from './components/FileTree';
 import ResizableSider from './components/ResizableSider';
@@ -8,9 +16,10 @@ import SearchModal from './components/SearchModal';
 import ChatModal from './components/ChatModal';
 import './App.css';
 
-const { Header, Content } = Layout;
+const { Header, Content, Sider } = Layout;
 
-const App: React.FC = () => {
+// 主布局组件
+const MainLayout: React.FC = () => {
   const [siderWidth, setSiderWidth] = useState(250);
   const [siderCollapsed, setSiderCollapsed] = useState(false);
   const [currentFile, setCurrentFile] = useState<{
@@ -19,9 +28,16 @@ const App: React.FC = () => {
   } | null>(null);
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [chatModalVisible, setChatModalVisible] = useState(false);
+  
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const handleFileSelect = (filePath: string, fileName: string) => {
     setCurrentFile({ path: filePath, name: fileName });
+    // 选择文件时导航到笔记页面
+    if (location.pathname !== '/') {
+      navigate('/');
+    }
   };
 
   const handleSearchModalOpen = () => {
@@ -43,6 +59,25 @@ const App: React.FC = () => {
   const toggleSider = () => {
     setSiderCollapsed(!siderCollapsed);
   };
+
+  // 获取当前页面标题
+  const getPageTitle = () => {
+    switch (location.pathname) {
+      case '/':
+        return 'AI笔记本';
+      default:
+        return 'AI笔记本';
+    }
+  };
+
+  // 菜单项
+  const menuItems = [
+    {
+      key: '/',
+      icon: <FileTextOutlined />,
+      label: '笔记编辑',
+    }
+  ];
 
   // 添加全局快捷键支持
   useEffect(() => {
@@ -102,7 +137,7 @@ const App: React.FC = () => {
             />
           </Tooltip>
           <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#1890ff' }}>
-            AI笔记本
+            {getPageTitle()}
           </div>
         </div>
         <Space>
@@ -135,7 +170,31 @@ const App: React.FC = () => {
         overflow: 'hidden',
         display: 'flex'
       }}>
+        {/* 左侧导航 */}
         {!siderCollapsed && (
+          <Sider 
+            width={80}
+            style={{
+              background: '#fafafa',
+              borderRight: '1px solid #f0f0f0',
+            }}
+          >
+            <Menu
+              mode="inline"
+              selectedKeys={[location.pathname]}
+              items={menuItems}
+              onClick={({ key }) => navigate(key)}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                marginTop: '16px'
+              }}
+            />
+          </Sider>
+        )}
+
+        {/* 文件树侧边栏（仅在笔记页面显示） */}
+        {!siderCollapsed && location.pathname === '/' && (
           <ResizableSider
             width={siderWidth}
             onResize={setSiderWidth}
@@ -154,6 +213,8 @@ const App: React.FC = () => {
             </div>
           </ResizableSider>
         )}
+
+        {/* 主内容区 */}
         <Content style={{ 
           padding: 0,
           flex: 1,
@@ -162,10 +223,18 @@ const App: React.FC = () => {
           display: 'flex',
           flexDirection: 'column'
         }}>
-          <NoteEditor
-            currentFile={currentFile}
-            onFileChange={handleFileSelect}
-          />
+          <Routes>
+            <Route 
+              path="/" 
+              element={
+                <NoteEditor
+                  currentFile={currentFile}
+                  onFileChange={handleFileSelect}
+                />
+              } 
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </Content>
       </Layout>
 
@@ -183,6 +252,15 @@ const App: React.FC = () => {
         onSelectFile={handleFileSelect}
       />
     </Layout>
+  );
+};
+
+// 根应用组件
+const App: React.FC = () => {
+  return (
+    <Router>
+      <MainLayout />
+    </Router>
   );
 };
 

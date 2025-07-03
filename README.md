@@ -19,6 +19,24 @@ AI笔记本是一个**纯本地、AI增强的个人知识管理系统**，旨在
 
 ### 最新功能更新
 
+#### 🔧 MCP工具调用集成 (2025-01-04)
+- **MCP协议支持**：完整实现Model Context Protocol (MCP)，支持AI自主调用外部工具
+- **智能工具调用**：AI聊天时可根据问题自动决定是否需要调用工具，无需手动干预
+- **多协议支持**：支持HTTP、stdio、SSE等多种MCP Server连接方式
+- **可视化管理**：提供专门的MCP管理界面，可配置、连接、监控MCP Server
+- **实时工具发现**：自动发现并注册MCP Server提供的工具，动态更新工具列表
+- **完整调用追踪**：记录所有工具调用的输入、输出、执行时间和状态
+- **流式工具调用**：在流式聊天中支持工具调用进度显示，提供实时反馈
+- **安全认证**：支持API Key、Bearer Token等多种认证方式
+- **错误容错**：完善的错误处理机制，工具调用失败不影响正常聊天功能
+- **向后兼容**：通过enable_tools参数可选择性启用/禁用工具调用
+- **界面集成优化 (2025-07-04)**：MCP工具管理从独立页面移动到主界面标签页，位于"图谱"标签右侧，提供更流畅的用户体验
+- **技术架构**：
+  - 数据库层：3个新表(mcp_servers、mcp_tools、mcp_tool_calls)存储配置和历史
+  - 服务层：MCPClientService提供完整的工具管理和调用功能
+  - AI集成：LangChain Function Calling与MCP工具无缝集成
+  - 前端界面：React组件提供直观的配置和监控界面
+
 #### 🏷️ 标签使用统计真实数据修复 (2025-07-03)
 - **问题修复**：修复标签管理中使用次数显示模拟数据的问题，每次刷新数据都会变动
 - **后端优化**：
@@ -645,7 +663,9 @@ uvicorn main:app --reload
 | `suggest_tags_api()` | `request: TagSuggestionRequest{title: str, content: str, max_tags: int=5}` | `Dict{"tags": List[str]}` | 基于内容智能推荐标签（从预设标签和数据库现有标签中选择） |
 | `create_embeddings_api()` | `file_id: int` | `Dict{"success": bool, "message": str}` | 为指定文件创建向量嵌入 |
 | `semantic_search_api()` | `request: SemanticSearchRequest{query: str, limit: int=10, similarity_threshold: float=0.7}` | `Dict{"results": List}` | 基于向量相似度进行语义搜索 |
-| `chat_api()` | `request: ChatRequest{question: str, max_context_length: int=3000, search_limit: int=5}` | `Dict{"answer": str, "related_documents": List, "search_query": str, "processing_time": float}` | AI智能问答，基于RAG技术回答用户问题 |
+| `chat_api()` | `request: ChatRequest{question: str, max_context_length: int=3000, search_limit: int=5, enable_tools: bool=True}` | `Dict{"answer": str, "related_documents": List, "search_query": str, "processing_time": float, "tool_calls": List}` | AI智能问答，基于RAG技术回答用户问题，支持MCP工具调用 |
+| `chat_completions()` | `request: OpenAIChatRequest{messages: List, stream: bool=False, enable_tools: bool=True}` | `OpenAIChatResponse` | OpenAI兼容的聊天完成接口，支持流式输出和MCP工具调用 |
+| `stream_chat_response()` | `ai_service: AIService, question: str, enable_tools: bool=True` | `AsyncGenerator` | 处理流式响应，支持工具调用进度显示 |
 | `analyze_content_api()` | `request: ContentAnalysisRequest{content: str}` | `Dict{"analysis": Any}` | 分析文档内容特征 |
 | `generate_related_questions_api()` | `request: RelatedQuestionsRequest{content: str, num_questions: int=3}` | `Dict{"questions": List[str]}` | 基于内容生成相关思考问题 |
 | `discover_smart_links_api()` | `file_id: int` | `Dict{"suggestions": List[SmartLinkSuggestion]}` | 智能发现文章间的链接关系 |
@@ -684,6 +704,23 @@ uvicorn main:app --reload
 | `update_link_api()` | `link_id: int, link: LinkUpdate` | `LinkResponse` | 更新链接信息 |
 | `delete_link_api()` | `link_id: int` | `None` | 删除链接 |
 
+#### MCP管理API (backend/app/api/mcp.py)
+
+| 函数名 | 传入参数 | 传出参数 | 功能说明 |
+|--------|----------|----------|----------|
+| `create_server()` | `server: MCPServerCreate` | `MCPServer` | 创建MCP Server配置 |
+| `get_servers()` | 无 | `List[MCPServer]` | 获取所有MCP Server列表 |
+| `get_server()` | `server_id: int` | `MCPServer` | 根据ID获取MCP Server |
+| `update_server()` | `server_id: int, server: MCPServerUpdate` | `MCPServer` | 更新MCP Server配置 |
+| `delete_server()` | `server_id: int` | `None` | 删除MCP Server |
+| `connect_server()` | `server_id: int` | `Dict{"success": bool, "message": str}` | 连接MCP Server |
+| `disconnect_server()` | `server_id: int` | `Dict{"success": bool, "message": str}` | 断开MCP Server连接 |
+| `get_server_tools()` | `server_id: int` | `List[MCPTool]` | 获取服务器的工具列表 |
+| `get_all_tools()` | 无 | `List[MCPTool]` | 获取所有可用工具 |
+| `call_tool()` | `request: MCPToolCallRequest` | `MCPToolCallResult` | 调用MCP工具 |
+| `get_tool_calls()` | `server_id: int=None, limit: int=50` | `List[MCPToolCall]` | 获取工具调用历史 |
+| `get_server_stats()` | `server_id: int` | `Dict[str, Any]` | 获取服务器统计信息 |
+
 ### 后端服务层
 
 #### 文件服务 (backend/app/services/file_service.py)
@@ -707,6 +744,32 @@ uvicorn main:app --reload
 - **避免重复执行**：使用文件锁机制防止多个索引进程同时运行
 - **非阻塞处理**：索引处理在独立的后台线程中进行，不影响文件保存操作
 
+#### MCP客户端服务 (backend/app/services/mcp_service.py)
+
+| 函数名 | 传入参数 | 传出参数 | 功能说明 |
+|--------|----------|----------|----------|
+| `MCPClientService.__init__()` | `db: Session` | `MCPClientService` | 初始化MCP客户端服务 |
+| `create_server()` | `server_data: MCPServerCreate` | `MCPServer` | 创建MCP Server配置 |
+| `update_server()` | `server_id: int, update_data: MCPServerUpdate` | `Optional[MCPServer]` | 更新MCP Server配置 |
+| `get_available_tools()` | 无 | `List[MCPTool]` | 获取所有可用的工具 |
+| `get_tools_for_llm()` | 无 | `List[Dict[str, Any]]` | 获取格式化的工具列表，用于LLM Function Calling |
+| `call_tool()` | `tool_name: str, arguments: Dict[str, Any], session_id: str=None` | `MCPToolCallResult` | 调用MCP工具 |
+| `_execute_tool_call()` | `tool: MCPTool, arguments: Dict[str, Any]` | `Any` | 执行具体的工具调用 |
+| `_call_http_tool()` | `tool: MCPTool, arguments: Dict[str, Any]` | `Any` | 通过HTTP调用工具 |
+| `_call_stdio_tool()` | `tool: MCPTool, arguments: Dict[str, Any]` | `Any` | 通过stdio调用工具 |
+| `_connect_server()` | `server: MCPServer` | `bool` | 内部方法：连接到MCP Server |
+| `_connect_http_server()` | `server: MCPServer` | `bool` | 连接HTTP类型的MCP Server |
+| `_connect_stdio_server()` | `server: MCPServer` | `bool` | 连接stdio类型的MCP Server |
+
+**MCP功能特性**：
+- **多协议支持**：支持HTTP、STDIO、SSE等多种MCP Server类型
+- **动态工具发现**：自动发现并注册MCP Server提供的工具
+- **智能连接管理**：自动检测连接状态，支持重连机制
+- **工具调用追踪**：完整记录工具调用历史和性能统计
+- **安全认证**：支持多种认证方式（API Key、Bearer Token等）
+- **LLM集成**：提供OpenAI Function Calling格式的工具列表
+- **异步执行**：支持异步工具调用，提高性能
+
 #### AI服务 (backend/app/services/ai_service.py)
 
 | 函数名 | 传入参数 | 传出参数 | 功能说明 |
@@ -716,7 +779,8 @@ uvicorn main:app --reload
 | `suggest_tags()` | `title: str, content: str, max_tags: int=5` | `List[str]` | 智能标签建议（从预设标签和数据库现有标签中选择，避免过度自由发挥） |
 | `create_embeddings()` | `file: File` | `bool` | 为文件创建向量嵌入 |
 | `semantic_search()` | `query: str, limit: int=10, similarity_threshold: float=0.7` | `List[Dict[str, Any]]` | 语义搜索 |
-| `chat_with_context()` | `question: str, max_context_length: int=3000, search_limit: int=5` | `Dict[str, Any]` | 基于RAG的智能问答，先搜索相关文档再生成回答 |
+| `chat_with_context()` | `question: str, max_context_length: int=3000, search_limit: int=5, enable_tools: bool=True` | `Dict[str, Any]` | 基于RAG的智能问答，支持MCP工具调用，先搜索相关文档再生成回答 |
+| `streaming_chat_with_context()` | `question: str, max_context_length: int=3000, search_limit: int=5, enable_tools: bool=True` | `AsyncGenerator` | 基于RAG的流式智能问答，支持MCP工具调用进度显示 |
 | `clear_vector_database()` | 无 | `bool` | 清空向量数据库 |
 | `add_document_to_vector_db()` | `file_id: int, title: str, content: str, metadata: Dict=None` | `bool` | 添加文档到向量数据库 |
 | `analyze_content()` | `content: str` | `Dict[str, Any]` | 内容分析 |

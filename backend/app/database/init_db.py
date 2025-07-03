@@ -11,6 +11,7 @@ from ..models.chat_session import ChatSession
 from ..models.chat_message import ChatMessage
 from ..models.system_config import SystemConfig
 from ..models.pending_task import PendingTask
+from ..models.mcp_server import MCPServer, MCPTool, MCPToolCall
 import logging
 import os
 import shutil

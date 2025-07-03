@@ -8,17 +8,20 @@ from langchain_chroma import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import requests
 import os
 import hashlib
 import threading
 import time
+import json
 from functools import lru_cache
 
 from ..models.file import File
 from ..models.embedding import Embedding
 from ..models.tag import Tag
 from ..config import settings
+from .mcp_service import MCPClientService
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +181,9 @@ class AIService:
         self._query_cache = {}
         self._cache_lock = threading.Lock()
         self._max_cache_size = 100  # 最大缓存100个查询
+        
+        # 初始化MCP服务
+        self.mcp_service = MCPClientService(db)
 
     def is_available(self) -> bool:
         """检查AI服务是否可用"""
@@ -734,8 +740,8 @@ class AIService:
             logger.info(f"生成并缓存新的查询向量: {query[:50]}...")
             return embedding
 
-    def chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5) -> Dict[str, Any]:
-        """基于上下文的智能问答 - RAG实现"""
+    def chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True) -> Dict[str, Any]:
+        """基于上下文的智能问答 - RAG实现，支持MCP工具调用"""
         if not self.is_available():
             logger.warning("AI服务不可用，无法进行智能问答")
             return {
@@ -747,7 +753,7 @@ class AIService:
         
         try:
             start_time = time.time()
-            logger.info(f"开始RAG问答，问题: {question}")
+            logger.info(f"开始RAG问答，问题: {question}, 工具调用: {enable_tools}")
             
             # 1. 语义搜索相关文档
             search_results = self.semantic_search(
@@ -791,7 +797,17 @@ class AIService:
             
             context = "\n\n".join(context_parts)
             
-            # 3. 构建提示词
+            # 3. 获取可用的MCP工具
+            tools = []
+            tool_calls_history = []
+            if enable_tools:
+                try:
+                    tools = self.mcp_service.get_tools_for_llm()
+                    logger.info(f"获取到 {len(tools)} 个可用工具")
+                except Exception as e:
+                    logger.warning(f"获取MCP工具失败: {e}")
+            
+            # 4. 构建提示词
             prompt = f"""你是一个智能助手，专门回答基于用户笔记内容的问题。请根据以下相关文档内容来回答用户的问题。
 
 用户问题：{question}
@@ -804,24 +820,102 @@ class AIService:
 2. 如果文档内容不足以完全回答问题，请说明并提供你能确定的部分
 3. 回答要简洁明了，重点突出
 4. 如果可能，请引用具体的文档来源
+5. 如果需要额外信息或执行特定任务，可以使用可用的工具
 
 回答："""
 
-            # 4. 调用LLM生成回答
+            # 5. 调用LLM生成回答（支持工具调用）
             logger.info(f"调用LLM生成回答，上下文长度: {len(context)} 字符")
-            response = self.llm.invoke(prompt)
-            answer = response.content.strip()
+            
+            if tools:
+                # 使用工具调用
+                llm_with_tools = self.llm.bind_tools(tools)
+                response = llm_with_tools.invoke(prompt)
+                
+                # 处理工具调用
+                if response.tool_calls:
+                    logger.info(f"LLM决定调用 {len(response.tool_calls)} 个工具")
+                    
+                    # 执行工具调用
+                    tool_results = []
+                    for tool_call in response.tool_calls:
+                        try:
+                            tool_name = tool_call["name"]
+                            tool_args = tool_call["args"]
+                            
+                            logger.info(f"调用工具: {tool_name}, 参数: {tool_args}")
+                            
+                            # 执行工具调用
+                            import asyncio
+                            result = asyncio.run(self.mcp_service.call_tool(
+                                tool_name=tool_name,
+                                arguments=tool_args,
+                                session_id=f"chat_{int(time.time())}"
+                            ))
+                            
+                            tool_results.append({
+                                "tool_name": tool_name,
+                                "arguments": tool_args,
+                                "result": result.result if result.success else result.error,
+                                "success": result.success,
+                                "execution_time": result.execution_time
+                            })
+                            
+                            tool_calls_history.append({
+                                "tool_name": tool_name,
+                                "arguments": tool_args,
+                                "result": result.result if result.success else result.error,
+                                "success": result.success,
+                                "execution_time": result.execution_time
+                            })
+                            
+                        except Exception as e:
+                            logger.error(f"工具调用失败: {e}")
+                            tool_results.append({
+                                "tool_name": tool_call.get("name", "unknown"),
+                                "arguments": tool_call.get("args", {}),
+                                "result": f"工具调用失败: {str(e)}",
+                                "success": False,
+                                "execution_time": 0
+                            })
+                    
+                    # 将工具结果整合到最终回答中
+                    if tool_results:
+                        tool_summary = "\n\n工具调用结果：\n"
+                        for i, result in enumerate(tool_results, 1):
+                            status = "成功" if result["success"] else "失败"
+                            tool_summary += f"{i}. {result['tool_name']} ({status}): {result['result']}\n"
+                        
+                        # 重新调用LLM，整合工具结果
+                        final_prompt = f"{prompt}\n\n{tool_summary}\n\n请根据上述信息和工具调用结果，提供最终的回答："
+                        final_response = self.llm.invoke(final_prompt)
+                        answer = final_response.content.strip()
+                    else:
+                        answer = response.content.strip()
+                else:
+                    answer = response.content.strip()
+            else:
+                # 不使用工具调用
+                response = self.llm.invoke(prompt)
+                answer = response.content.strip()
             
             total_time = time.time() - start_time
             logger.info(f"RAG问答完成，耗时: {total_time:.3f}秒，回答长度: {len(answer)} 字符")
             
-            return {
+            result = {
                 "answer": answer,
                 "related_documents": related_docs,
                 "search_query": question,
                 "context_length": len(context),
-                "processing_time": round(total_time, 3)
+                "processing_time": round(total_time, 3),
+                "tools_used": len(tools) if tools else 0
             }
+            
+            # 如果有工具调用历史，添加到结果中
+            if tool_calls_history:
+                result["tool_calls"] = tool_calls_history
+            
+            return result
             
         except Exception as e:
             logger.error(f"RAG问答失败: {e}")
@@ -835,8 +929,8 @@ class AIService:
                 "error": str(e)
             }
 
-    async def streaming_chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5):
-        """基于上下文的流式智能问答 - RAG实现"""
+    async def streaming_chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True):
+        """基于上下文的流式智能问答 - RAG实现，支持MCP工具调用"""
         if not self.is_available() or not self.streaming_llm:
             logger.warning("AI服务或流式LLM不可用，无法进行流式智能问答")
             yield {
@@ -848,7 +942,7 @@ class AIService:
         
         try:
             start_time = time.time()
-            logger.info(f"开始流式RAG问答，问题: {question}")
+            logger.info(f"开始流式RAG问答，问题: {question}, 工具调用: {enable_tools}")
             
             # 1. 语义搜索相关文档
             search_results = self.semantic_search(
@@ -892,7 +986,17 @@ class AIService:
             
             context = "\n\n".join(context_parts)
             
-            # 3. 构建提示词
+            # 3. 获取可用的MCP工具
+            tools = []
+            tool_calls_history = []
+            if enable_tools:
+                try:
+                    tools = self.mcp_service.get_tools_for_llm()
+                    logger.info(f"获取到 {len(tools)} 个可用工具")
+                except Exception as e:
+                    logger.warning(f"获取MCP工具失败: {e}")
+            
+            # 4. 构建提示词
             prompt = f"""你是一个智能助手，专门回答基于用户笔记内容的问题。请根据以下相关文档内容来回答用户的问题。
 
 用户问题：{question}
@@ -905,10 +1009,115 @@ class AIService:
 2. 如果文档内容不足以完全回答问题，请说明并提供你能确定的部分
 3. 回答要简洁明了，重点突出
 4. 如果可能，请引用具体的文档来源
+5. 如果需要额外信息或执行特定任务，可以使用可用的工具
 
 回答："""
 
-            # 4. 流式调用LLM生成回答
+            # 5. 检查是否需要工具调用（先进行非流式检查）
+            if tools:
+                # 先用非流式LLM检查是否需要工具调用
+                llm_with_tools = self.llm.bind_tools(tools)
+                check_response = llm_with_tools.invoke(prompt)
+                
+                if check_response.tool_calls:
+                    logger.info(f"LLM决定调用 {len(check_response.tool_calls)} 个工具")
+                    
+                    # 发送工具调用开始信号
+                    yield {
+                        "tool_calls_started": True,
+                        "tool_count": len(check_response.tool_calls),
+                        "related_documents": related_docs,
+                        "search_query": question,
+                        "context_length": len(context)
+                    }
+                    
+                    # 执行工具调用
+                    tool_results = []
+                    for i, tool_call in enumerate(check_response.tool_calls):
+                        try:
+                            tool_name = tool_call["name"]
+                            tool_args = tool_call["args"]
+                            
+                            # 发送工具调用进度
+                            yield {
+                                "tool_call_progress": {
+                                    "index": i + 1,
+                                    "total": len(check_response.tool_calls),
+                                    "tool_name": tool_name,
+                                    "status": "executing"
+                                }
+                            }
+                            
+                            logger.info(f"调用工具: {tool_name}, 参数: {tool_args}")
+                            
+                            # 执行工具调用
+                            result = await self.mcp_service.call_tool(
+                                tool_name=tool_name,
+                                arguments=tool_args,
+                                session_id=f"stream_chat_{int(time.time())}"
+                            )
+                            
+                            tool_result = {
+                                "tool_name": tool_name,
+                                "arguments": tool_args,
+                                "result": result.result if result.success else result.error,
+                                "success": result.success,
+                                "execution_time": result.execution_time
+                            }
+                            
+                            tool_results.append(tool_result)
+                            tool_calls_history.append(tool_result)
+                            
+                            # 发送工具调用完成
+                            yield {
+                                "tool_call_progress": {
+                                    "index": i + 1,
+                                    "total": len(check_response.tool_calls),
+                                    "tool_name": tool_name,
+                                    "status": "completed",
+                                    "result": tool_result
+                                }
+                            }
+                            
+                        except Exception as e:
+                            logger.error(f"工具调用失败: {e}")
+                            error_result = {
+                                "tool_name": tool_call.get("name", "unknown"),
+                                "arguments": tool_call.get("args", {}),
+                                "result": f"工具调用失败: {str(e)}",
+                                "success": False,
+                                "execution_time": 0
+                            }
+                            tool_results.append(error_result)
+                            
+                            # 发送工具调用错误
+                            yield {
+                                "tool_call_progress": {
+                                    "index": i + 1,
+                                    "total": len(check_response.tool_calls),
+                                    "tool_name": tool_call.get("name", "unknown"),
+                                    "status": "error",
+                                    "error": str(e)
+                                }
+                            }
+                    
+                    # 发送工具调用完成信号
+                    yield {
+                        "tool_calls_completed": True,
+                        "tool_results": tool_results
+                    }
+                    
+                    # 将工具结果整合到提示词中
+                    if tool_results:
+                        tool_summary = "\n\n工具调用结果：\n"
+                        for i, result in enumerate(tool_results, 1):
+                            status = "成功" if result["success"] else "失败"
+                            tool_summary += f"{i}. {result['tool_name']} ({status}): {result['result']}\n"
+                        
+                        # 更新提示词
+                        prompt = f"{prompt}\n\n{tool_summary}\n\n请根据上述信息和工具调用结果，提供最终的回答："
+            
+            # 6. 流式调用LLM生成回答
             logger.info(f"开始流式调用LLM，上下文长度: {len(context)} 字符")
             
             # 使用LangChain的astream方法进行真正的流式输出
@@ -925,13 +1134,20 @@ class AIService:
             total_time = time.time() - start_time
             logger.info(f"流式RAG问答完成，耗时: {total_time:.3f}秒")
             
-            yield {
+            final_result = {
                 "finished": True,
                 "processing_time": round(total_time, 3),
                 "related_documents": related_docs,
                 "search_query": question,
-                "context_length": len(context)
+                "context_length": len(context),
+                "tools_used": len(tools) if tools else 0
             }
+            
+            # 如果有工具调用历史，添加到结果中
+            if tool_calls_history:
+                final_result["tool_calls"] = tool_calls_history
+            
+            yield final_result
             
         except Exception as e:
             logger.error(f"流式RAG问答失败: {e}")

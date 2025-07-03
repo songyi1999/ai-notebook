@@ -132,6 +132,80 @@ export interface ChatResponse {
     error?: string;
 }
 
+// MCP相关接口
+export interface MCPServer {
+    id: number;
+    name: string;
+    description?: string;
+    server_type: string;
+    server_config: Record<string, any>;
+    auth_type?: string;
+    auth_config?: Record<string, any>;
+    is_enabled: boolean;
+    is_connected: boolean;
+    connection_status?: string;
+    last_connected_at?: string;
+    error_message?: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface MCPServerCreate {
+    name: string;
+    description?: string;
+    server_type: string;
+    server_config: Record<string, any>;
+    auth_type?: string;
+    auth_config?: Record<string, any>;
+    is_enabled?: boolean;
+}
+
+export interface MCPTool {
+    id: number;
+    server_id: number;
+    tool_name: string;
+    tool_description?: string;
+    input_schema?: Record<string, any>;
+    output_schema?: Record<string, any>;
+    is_available: boolean;
+    usage_count: number;
+    last_used_at?: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface MCPToolCall {
+    id: number;
+    tool_id: number;
+    session_id?: string;
+    call_context?: string;
+    input_data: Record<string, any>;
+    output_data?: Record<string, any>;
+    call_status: string;
+    error_message?: string;
+    execution_time_ms?: number;
+    ai_reasoning?: string;
+    user_feedback?: number;
+    created_at: string;
+}
+
+export interface MCPStats {
+    servers: {
+        total: number;
+        enabled: number;
+        connected: number;
+    };
+    tools: {
+        total: number;
+        available: number;
+    };
+    calls: {
+        total: number;
+        success: number;
+        success_rate: number;
+    };
+}
+
 // 系统状态相关接口
 export interface SystemStatus {
     total_files: number;
@@ -155,7 +229,7 @@ export class ApiClient {
     }
 
     // 通用请求方法
-    private async request<T>(
+    public async request<T>(
         endpoint: string,
         options: RequestInit = {}
     ): Promise<T> {
@@ -431,8 +505,7 @@ export class ApiClient {
 
     // 获取系统状态
     async getSystemStatus(): Promise<SystemStatus> {
-        const response = await this.request<{ success: boolean; data: SystemStatus }>('/index/system-status');
-        return response.data;
+        return this.request<SystemStatus>('/index/status');
     }
 }
 
@@ -487,4 +560,87 @@ export const healthCheck = (...args: Parameters<ApiClient['healthCheck']>) => ap
 export const deleteFileByPath = (...args: Parameters<ApiClient['deleteFileByPath']>) => apiClient.deleteFileByPath(...args);
 export const rebuildIndex = (...args: Parameters<ApiClient['rebuildIndex']>) => apiClient.rebuildIndex(...args);
 export const chat = (...args: Parameters<ApiClient['chat']>) => apiClient.chat(...args);
-export const getSystemStatus = (...args: Parameters<ApiClient['getSystemStatus']>) => apiClient.getSystemStatus(...args); 
+export const getSystemStatus = (...args: Parameters<ApiClient['getSystemStatus']>) => apiClient.getSystemStatus(...args);
+
+// MCP相关API方法
+export const mcpApi = {
+    // MCP服务器管理
+    async getServers(): Promise<MCPServer[]> {
+        return apiClient.request<MCPServer[]>('/mcp/servers');
+    },
+
+    async getServer(serverId: number): Promise<MCPServer> {
+        return apiClient.request<MCPServer>(`/mcp/servers/${serverId}`);
+    },
+
+    async createServer(serverData: MCPServerCreate): Promise<MCPServer> {
+        return apiClient.request<MCPServer>('/mcp/servers', {
+            method: 'POST',
+            body: JSON.stringify(serverData)
+        });
+    },
+
+    async updateServer(serverId: number, serverData: Partial<MCPServerCreate>): Promise<MCPServer> {
+        return apiClient.request<MCPServer>(`/mcp/servers/${serverId}`, {
+            method: 'PUT',
+            body: JSON.stringify(serverData)
+        });
+    },
+
+    async deleteServer(serverId: number): Promise<void> {
+        return apiClient.request<void>(`/mcp/servers/${serverId}`, {
+            method: 'DELETE'
+        });
+    },
+
+    async connectServer(serverId: number): Promise<{ message: string }> {
+        return apiClient.request<{ message: string }>(`/mcp/servers/${serverId}/connect`, {
+            method: 'POST'
+        });
+    },
+
+    async disconnectServer(serverId: number): Promise<{ message: string }> {
+        return apiClient.request<{ message: string }>(`/mcp/servers/${serverId}/disconnect`, {
+            method: 'POST'
+        });
+    },
+
+    // MCP工具管理
+    async getTools(): Promise<MCPTool[]> {
+        return apiClient.request<MCPTool[]>('/mcp/tools');
+    },
+
+    async getTool(toolId: number): Promise<MCPTool> {
+        return apiClient.request<MCPTool>(`/mcp/tools/${toolId}`);
+    },
+
+    async discoverTools(serverId: number): Promise<{ message: string; tools_count: number }> {
+        return apiClient.request<{ message: string; tools_count: number }>(`/mcp/servers/${serverId}/discover-tools`, {
+            method: 'POST'
+        });
+    },
+
+    // MCP调用历史
+    async getToolCalls(params?: {
+        limit?: number;
+        tool_id?: number;
+        session_id?: string;
+    }): Promise<MCPToolCall[]> {
+        const searchParams = new URLSearchParams();
+        if (params?.limit) searchParams.set('limit', params.limit.toString());
+        if (params?.tool_id) searchParams.set('tool_id', params.tool_id.toString());
+        if (params?.session_id) searchParams.set('session_id', params.session_id);
+
+        const queryString = searchParams.toString();
+        return apiClient.request<MCPToolCall[]>(`/mcp/tool-calls${queryString ? '?' + queryString : ''}`);
+    },
+
+    async getToolCall(callId: number): Promise<MCPToolCall> {
+        return apiClient.request<MCPToolCall>(`/mcp/tool-calls/${callId}`);
+    },
+
+    // MCP统计信息
+    async getStats(): Promise<MCPStats> {
+        return apiClient.request<MCPStats>('/mcp/stats');
+    }
+}; 

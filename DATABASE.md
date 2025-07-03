@@ -283,6 +283,131 @@ CREATE INDEX ix_pending_tasks_id ON pending_tasks(id);
 - `status`: 任务状态，支持待处理、处理中、完成、失败等状态
 - `priority`: 任务优先级，用于调度任务处理顺序
 
+## MCP (Model Context Protocol) 相关表
+
+### 10. mcp_servers (MCP服务器表)
+
+存储MCP Server的配置信息。
+
+```sql
+CREATE TABLE mcp_servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR(100) NOT NULL UNIQUE,       -- Server名称
+    description TEXT,                        -- Server描述
+    server_type VARCHAR(50) NOT NULL,        -- Server类型：http, stdio, sse等
+    server_config JSON NOT NULL,             -- Server配置（URL、认证等）
+    auth_type VARCHAR(50),                   -- 认证类型：none, api_key, bearer等
+    auth_config JSON,                        -- 认证配置
+    is_enabled BOOLEAN DEFAULT TRUE,         -- 是否启用
+    is_connected BOOLEAN DEFAULT FALSE,      -- 连接状态
+    connection_status VARCHAR(50),           -- 连接状态详情
+    last_connected_at DATETIME,              -- 最后连接时间
+    error_message TEXT,                      -- 错误信息
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 索引
+CREATE INDEX idx_mcp_servers_name ON mcp_servers(name);
+CREATE INDEX idx_mcp_servers_enabled ON mcp_servers(is_enabled);
+CREATE INDEX idx_mcp_servers_connected ON mcp_servers(is_connected);
+```
+
+**字段说明：**
+- `server_type`: 支持http、stdio、sse等MCP传输协议
+- `server_config`: JSON格式存储具体配置，如URL、端口等
+- `auth_config`: JSON格式存储认证信息，如API密钥等
+- `connection_status`: 详细状态如"connected"、"disconnected"、"error"等
+
+### 11. mcp_tools (MCP工具表)
+
+存储从MCP Server发现的工具信息。
+
+```sql
+CREATE TABLE mcp_tools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER NOT NULL,              -- 关联的MCP Server ID
+    tool_name VARCHAR(100) NOT NULL,         -- 工具名称
+    tool_description TEXT,                   -- 工具描述
+    input_schema JSON,                       -- 输入参数schema
+    output_schema JSON,                      -- 输出结果schema
+    tool_config JSON,                        -- 工具配置
+    is_available BOOLEAN DEFAULT TRUE,       -- 是否可用
+    usage_count INTEGER DEFAULT 0,           -- 使用次数
+    last_used_at DATETIME,                   -- 最后使用时间
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE,
+    UNIQUE(server_id, tool_name)
+);
+
+-- 索引
+CREATE INDEX idx_mcp_tools_server ON mcp_tools(server_id);
+CREATE INDEX idx_mcp_tools_name ON mcp_tools(tool_name);
+CREATE INDEX idx_mcp_tools_available ON mcp_tools(is_available);
+CREATE INDEX idx_mcp_tools_usage ON mcp_tools(usage_count);
+```
+
+**字段说明：**
+- `input_schema/output_schema`: JSON Schema格式的参数定义
+- `tool_config`: 工具特定的配置选项
+- `usage_count`: 统计工具使用频率，用于推荐
+
+### 12. mcp_tool_calls (MCP工具调用表)
+
+记录AI助手的工具调用历史。
+
+```sql
+CREATE TABLE mcp_tool_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_id INTEGER NOT NULL,                -- 关联的工具ID
+    session_id VARCHAR(100),                 -- 聊天会话ID
+    call_context TEXT,                       -- 调用上下文（用户问题等）
+    input_data JSON NOT NULL,                -- 调用输入参数
+    output_data JSON,                        -- 调用输出结果
+    call_status VARCHAR(50) NOT NULL,        -- 调用状态：success, error, timeout
+    error_message TEXT,                      -- 错误信息
+    execution_time_ms INTEGER,               -- 执行时间（毫秒）
+    ai_reasoning TEXT,                       -- AI选择该工具的推理过程
+    user_feedback INTEGER,                   -- 用户反馈：1好评，0差评，NULL未评价
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (tool_id) REFERENCES mcp_tools(id) ON DELETE CASCADE
+);
+
+-- 索引
+CREATE INDEX idx_mcp_tool_calls_tool ON mcp_tool_calls(tool_id);
+CREATE INDEX idx_mcp_tool_calls_session ON mcp_tool_calls(session_id);
+CREATE INDEX idx_mcp_tool_calls_status ON mcp_tool_calls(call_status);
+CREATE INDEX idx_mcp_tool_calls_created ON mcp_tool_calls(created_at);
+```
+
+**字段说明：**
+- `call_context`: 记录AI为什么选择调用这个工具
+- `ai_reasoning`: AI的决策推理过程，用于调试和优化
+- `user_feedback`: 用户对工具调用结果的评价，用于改进
+
+## MCP功能特性
+
+### 工具调用流程
+1. **工具发现**：定期扫描已启用的MCP Server，发现可用工具
+2. **智能选择**：AI根据用户问题和工具描述，智能选择合适的工具
+3. **安全调用**：验证输入参数，安全执行工具调用
+4. **结果整合**：将工具结果整合到AI回答中
+5. **历史记录**：记录调用过程，支持审计和优化
+
+### 安全机制
+- **权限控制**：用户可以启用/禁用特定工具
+- **参数验证**：严格验证工具调用参数
+- **错误处理**：完善的错误处理和超时机制
+- **调用审计**：完整的调用历史记录
+
+### 扩展性设计
+- **多协议支持**：支持HTTP、stdio、SSE等MCP传输协议
+- **插件化架构**：易于添加新的MCP Server支持
+- **配置灵活**：支持复杂的认证和配置需求
+
 ## 搜索功能说明
 
 ### 关键词搜索

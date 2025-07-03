@@ -41,6 +41,7 @@ class ChatRequest(BaseModel):
     question: str
     max_context_length: int = 3000
     search_limit: int = 5
+    enable_tools: bool = True
 
 # OpenAI兼容格式
 class Message(BaseModel):
@@ -55,13 +56,14 @@ class OpenAIChatRequest(BaseModel):
     stream: bool = False
     max_context_length: int = 3000
     search_limit: int = 5
+    enable_tools: bool = True
     
 class OpenAIChatResponse(BaseModel):
     """OpenAI兼容的聊天响应模型"""
     model: str  # 返回实际使用的模型名称
     choices: List[Dict]
 
-async def stream_chat_response(ai_service: AIService, question: str, max_context_length: int = 3000, search_limit: int = 5) -> AsyncGenerator:
+async def stream_chat_response(ai_service: AIService, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True) -> AsyncGenerator:
     """处理真正的流式响应
     
     Args:
@@ -77,7 +79,8 @@ async def stream_chat_response(ai_service: AIService, question: str, max_context
         async for stream_data in ai_service.streaming_chat_with_context(
             question=question,
             max_context_length=max_context_length,
-            search_limit=search_limit
+            search_limit=search_limit,
+            enable_tools=enable_tools
         ):
             # 检查是否有错误
             if "error" in stream_data:
@@ -99,6 +102,34 @@ async def stream_chat_response(ai_service: AIService, question: str, max_context
                     }]
                 }
                 yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
+            
+            # 检查是否是工具调用开始
+            elif "tool_calls_started" in stream_data:
+                tool_start_data = {
+                    "tool_calls_started": True,
+                    "tool_count": stream_data["tool_count"],
+                    "metadata": {
+                        "related_documents": stream_data.get("related_documents", []),
+                        "search_query": stream_data.get("search_query", ""),
+                        "context_length": stream_data.get("context_length", 0)
+                    }
+                }
+                yield f"data: {json.dumps(tool_start_data, ensure_ascii=False)}\n\n"
+            
+            # 检查是否是工具调用进度
+            elif "tool_call_progress" in stream_data:
+                tool_progress_data = {
+                    "tool_call_progress": stream_data["tool_call_progress"]
+                }
+                yield f"data: {json.dumps(tool_progress_data, ensure_ascii=False)}\n\n"
+            
+            # 检查是否是工具调用完成
+            elif "tool_calls_completed" in stream_data:
+                tool_complete_data = {
+                    "tool_calls_completed": True,
+                    "tool_results": stream_data["tool_results"]
+                }
+                yield f"data: {json.dumps(tool_complete_data, ensure_ascii=False)}\n\n"
             
             # 检查是否是结束信号
             elif "finished" in stream_data:
@@ -171,7 +202,7 @@ async def chat_completions(request: OpenAIChatRequest, db: Session = Depends(get
         if request.stream:
             # 返回流式响应
             return StreamingResponse(
-                stream_chat_response(ai_service, question, request.max_context_length, request.search_limit),
+                stream_chat_response(ai_service, question, request.max_context_length, request.search_limit, request.enable_tools),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -185,7 +216,8 @@ async def chat_completions(request: OpenAIChatRequest, db: Session = Depends(get
         result = ai_service.chat_with_context(
             question=question,
             max_context_length=request.max_context_length,
-            search_limit=request.search_limit
+            search_limit=request.search_limit,
+            enable_tools=request.enable_tools
         )
         
         logger.info(f"生成回答: {result.get('answer', '')[:100]}...")
@@ -345,7 +377,8 @@ def chat_api(request: ChatRequest, db: Session = Depends(get_db)):
         result = ai_service.chat_with_context(
             question=request.question,
             max_context_length=request.max_context_length,
-            search_limit=request.search_limit
+            search_limit=request.search_limit,
+            enable_tools=request.enable_tools
         )
         
         return result

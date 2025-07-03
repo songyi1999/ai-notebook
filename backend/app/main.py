@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database.init_db import init_db
-from .api import files, links, tags, ai, index, tasks
+from .api import files, links, tags, ai, index, tasks, mcp
 from .config import settings
 import logging
 
@@ -69,13 +69,15 @@ app.include_router(tags.router, prefix=settings.api_prefix, tags=["tags"])
 app.include_router(ai.router, prefix=settings.api_prefix, tags=["ai"])
 app.include_router(index.router, prefix=f"{settings.api_prefix}/index", tags=["index"])
 app.include_router(tasks.router, prefix=settings.api_prefix, tags=["tasks"])
+app.include_router(mcp.router, prefix=settings.api_prefix, tags=["mcp"])
 
 @app.get("/")
 async def root():
     return {
         "message": "AI笔记本后端服务运行中", 
         "version": "1.0.0",
-        "ai_enabled": settings.openai_api_key is not None
+        "ai_enabled": settings.openai_api_key is not None,
+        "mcp_enabled": True
     }
 
 @app.get("/health")
@@ -84,7 +86,8 @@ async def health_check():
         "status": "healthy", 
         "service": "ai-notebook-backend",
         "notes_directory": settings.notes_directory,
-        "ai_configured": settings.openai_api_key is not None
+        "ai_configured": settings.openai_api_key is not None,
+        "mcp_configured": True
     }
 
 if __name__ == "__main__":

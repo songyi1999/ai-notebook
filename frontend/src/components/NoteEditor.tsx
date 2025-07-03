@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button, Input, Space, message, Tabs, Typography, Spin, Divider, Modal } from 'antd';
-import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined, ToolOutlined, LinkOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
@@ -9,6 +9,8 @@ import { apiClient, SystemStatus, search } from '../services/api';
 import TagManager from './TagManager';
 import AutoProcessor from './AutoProcessor';
 import LinkGraph from './LinkGraph';
+import MCPManager from './MCPManager';
+import LinkManager from './LinkManager';
 
 const { Text } = Typography;
 
@@ -783,6 +785,47 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                     message.success(`已跳转到文件: ${filePath}`);
                   }}
                 />
+              )
+            },
+            {
+              key: 'mcp',
+              label: (
+                <span>
+                  <ToolOutlined />
+                  MCP工具
+                </span>
+              ),
+              children: (
+                <div style={{ 
+                  height: '100%',
+                  overflow: 'hidden'
+                }}>
+                  <MCPManager />
+                </div>
+              )
+            },
+            {
+              key: 'links',
+              label: (
+                <span>
+                  <LinkOutlined />
+                  链接管理
+                </span>
+              ),
+              children: (
+                <div style={{ 
+                  height: '100%',
+                  overflow: 'hidden'
+                }}>
+                  <LinkManager
+                    fileId={currentNote.id}
+                    filePath={currentNote.file_path}
+                    onLinksChange={(links) => {
+                      // 链接变化时的回调处理
+                      console.log('链接已更新:', links);
+                    }}
+                  />
+                </div>
               )
             }
           ]}
