@@ -281,12 +281,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ visible, onClose, onSelectFil
                                 </div>
                                 <Text code style={{ fontSize: '12px' }}>{result.file_path}</Text>
                                 <Text type="secondary" style={{ fontSize: '13px' }}>{result.content_preview}</Text>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                  <Space>
-                                    {result.tags?.map((tag, index) => (
-                                      <Tag key={index}>{tag}</Tag>
-                                    ))}
-                                  </Space>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                   <Space>
                                     <Text type="secondary" style={{ fontSize: '12px' }}>{formatFileSize(result.file_size)}</Text>
                                     <Text type="secondary" style={{ fontSize: '12px' }}>{formatDate(result.updated_at)}</Text>

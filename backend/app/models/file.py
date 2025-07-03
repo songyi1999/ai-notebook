@@ -16,5 +16,4 @@ class File(Base):
     updated_at = Column(DateTime, default=func.now())
     is_deleted = Column(Boolean, default=False, index=True)
     parent_folder = Column(String, index=True)
-    tags = Column(JSON)
     file_metadata = Column(JSON) 

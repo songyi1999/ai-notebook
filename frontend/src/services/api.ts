@@ -13,7 +13,6 @@ export interface FileData {
     updated_at?: string;
     is_deleted?: boolean;
     parent_folder?: string;
-    tags?: string[];
     file_metadata?: any;
 }
 
@@ -39,7 +38,6 @@ export interface SearchResult {
     file_size?: number;
     created_at?: string;
     updated_at?: string;
-    tags?: string[];
 }
 
 // 搜索响应接口

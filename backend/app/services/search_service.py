@@ -183,7 +183,7 @@ class SearchService:
             "file_size": file.file_size,
             "created_at": safe_datetime_to_iso(file.created_at),
             "updated_at": safe_datetime_to_iso(file.updated_at),
-            "tags": file.tags
+            "tags": []  # 标签信息现在通过file_tags关联表获取
         }
     
     def _record_search_history(

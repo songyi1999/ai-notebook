@@ -10,7 +10,6 @@ class FileBase(BaseModel):
     file_size: int = Field(0, description="文件大小（字节）")
     is_deleted: bool = Field(False, description="软删除标记")
     parent_folder: Optional[str] = Field(None, description="父文件夹路径")
-    tags: Optional[List[str]] = Field(None, description="标签列表（JSON格式）")
     file_metadata: Optional[dict] = Field(None, description="其他元数据（JSON格式）")
 
 class FileCreate(FileBase):

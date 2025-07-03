@@ -38,7 +38,6 @@ CREATE TABLE files (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_deleted BOOLEAN DEFAULT FALSE,        -- 软删除标记
     parent_folder VARCHAR,                   -- 父文件夹路径
-    tags JSON,                               -- 标签（JSON格式）
     file_metadata JSON                       -- 其他元数据（JSON格式）
 );
 
@@ -54,8 +53,7 @@ CREATE INDEX ix_files_parent_folder ON files(parent_folder);
 - `title`: 从文件名或第一个标题提取的标题
 - `content`: 完整的Markdown内容
 - `content_hash`: SHA256哈希值，用于检测文件是否被外部修改
-- `tags`: JSON数组格式，如 `["技术", "Python", "编程"]`
-- `metadata`: 扩展元数据，如文档统计信息等
+- `file_metadata`: 扩展元数据，如文档统计信息等
 
 ### 2. links (链接表)
 

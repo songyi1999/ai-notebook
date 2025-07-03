@@ -415,7 +415,11 @@ const AutoProcessor: React.FC<AutoProcessorProps> = ({
   }, [loadFiles, checkAIStatus]);
 
   return (
-    <div style={{ padding: '16px' }}>
+    <div style={{ 
+      height: '100%',
+      overflow: 'auto',
+      padding: '16px'
+    }}>
       {/* AI状态提示 */}
       {!aiAvailable && (
         <Alert

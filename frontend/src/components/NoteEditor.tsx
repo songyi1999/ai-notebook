@@ -711,15 +711,20 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                 </span>
               ),
               children: (
-                <TagManager
-                  currentFileId={currentNote.id}
-                  currentFileTitle={currentNote.title}
-                  currentFileContent={currentNote.content}
-                  onTagsChange={(tags) => {
-                    // 这里可以处理标签变化的逻辑
-                    console.log('标签已更新:', tags);
-                  }}
-                />
+                <div style={{ 
+                  height: '100%',
+                  overflow: 'hidden'
+                }}>
+                  <TagManager
+                    currentFileId={currentNote.id}
+                    currentFileTitle={currentNote.title}
+                    currentFileContent={currentNote.content}
+                    onTagsChange={(tags) => {
+                      // 这里可以处理标签变化的逻辑
+                      console.log('标签已更新:', tags);
+                    }}
+                  />
+                </div>
               )
             },
             {
@@ -731,14 +736,19 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                 </span>
               ),
               children: (
-                <AutoProcessor
-                  currentFileId={currentNote.id}
-                  onProcessingComplete={(results) => {
-                    // 处理完成后的回调
-                    console.log('AI处理完成:', results);
-                    message.success(`AI处理完成！处理了 ${results.length} 个文件`);
-                  }}
-                />
+                <div style={{ 
+                  height: '100%',
+                  overflow: 'hidden'
+                }}>
+                  <AutoProcessor
+                    currentFileId={currentNote.id}
+                    onProcessingComplete={(results) => {
+                      // 处理完成后的回调
+                      console.log('AI处理完成:', results);
+                      message.success(`AI处理完成！处理了 ${results.length} 个文件`);
+                    }}
+                  />
+                </div>
               )
             },
             {

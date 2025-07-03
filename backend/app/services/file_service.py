@@ -67,7 +67,6 @@ class FileService:
                 content_hash=content_hash,
                 file_size=file_size,
                 parent_folder=file.parent_folder,
-                tags=file.tags,
                 file_metadata=file.file_metadata
             )
             
