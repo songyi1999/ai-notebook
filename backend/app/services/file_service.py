@@ -219,7 +219,7 @@ class FileService:
             raise
     
     def _add_vector_index_task(self, file: File):
-        """将向量索引任务添加到后台队列"""
+        """将向量索引任务添加到后台队列，并检查是否需要启动索引进程"""
         try:
             from .task_processor_service import TaskProcessorService
             task_processor = TaskProcessorService(self.db)
@@ -234,12 +234,59 @@ class FileService:
             
             if success:
                 logger.info(f"向量索引任务添加成功: {file.file_path}")
+                
+                # 检查索引进程是否在运行，如果没有运行则启动
+                self._ensure_task_processor_running(task_processor)
+                
             else:
                 logger.error(f"向量索引任务添加失败: {file.file_path}")
                 
         except Exception as e:
             logger.error(f"添加向量索引任务失败: {file.file_path}, 错误: {e}")
             # 任务添加失败不应该影响文件保存，所以不抛出异常
+
+    def _ensure_task_processor_running(self, task_processor):
+        """确保任务处理器正在运行，如果没有运行则启动"""
+        try:
+            # 检查是否有锁文件存在（表示有进程在运行）
+            if task_processor.lock_file.exists():
+                from datetime import datetime, timedelta
+                # 检查锁文件是否过期（超过10分钟认为是死锁）
+                lock_time = datetime.fromtimestamp(task_processor.lock_file.stat().st_mtime)
+                if datetime.now() - lock_time < timedelta(minutes=10):
+                    logger.debug("任务处理器已在运行中，无需启动新进程")
+                    return
+                else:
+                    logger.warning("检测到过期的锁文件，将启动新的任务处理器")
+            
+            # 没有运行中的任务处理器，启动一个新的后台线程来处理任务
+            import threading
+            
+            def background_task_processor():
+                try:
+                    # 创建新的数据库会话（避免线程间共享）
+                    from ..database.session import SessionLocal
+                    from .task_processor_service import TaskProcessorService
+                    
+                    bg_db = SessionLocal()
+                    try:
+                        bg_task_processor = TaskProcessorService(bg_db)
+                        logger.info("启动后台任务处理器...")
+                        bg_task_processor.process_all_pending_tasks()
+                        logger.info("后台任务处理器执行完成")
+                    finally:
+                        bg_db.close()
+                except Exception as e:
+                    logger.error(f"后台任务处理器执行失败: {e}")
+            
+            # 启动后台线程（daemon=True 确保主进程退出时线程也会退出）
+            background_thread = threading.Thread(target=background_task_processor, daemon=True)
+            background_thread.start()
+            logger.info("后台任务处理器线程已启动")
+            
+        except Exception as e:
+            logger.error(f"启动任务处理器失败: {e}")
+            # 启动失败不应该影响文件保存，所以不抛出异常
 
     def _update_vector_index_async(self, file: File):
         """异步更新向量索引"""

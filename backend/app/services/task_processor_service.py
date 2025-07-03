@@ -305,13 +305,14 @@ class TaskProcessorService:
         """
         try:
             # 查找重复任务组
-            duplicate_groups = self.db.execute("""
+            from sqlalchemy import text
+            duplicate_groups = self.db.execute(text("""
                 SELECT file_id, task_type, COUNT(*) as count
                 FROM pending_tasks 
                 WHERE status = 'pending'
                 GROUP BY file_id, task_type
                 HAVING COUNT(*) > 1
-            """).fetchall()
+            """)).fetchall()
             
             removed_count = 0
             
@@ -356,35 +357,36 @@ class TaskProcessorService:
     def get_task_statistics(self) -> Dict[str, Any]:
         """获取任务队列统计信息"""
         try:
+            from sqlalchemy import text
             stats = {}
             
             # 按状态统计
-            status_stats = self.db.execute("""
+            status_stats = self.db.execute(text("""
                 SELECT status, COUNT(*) as count
                 FROM pending_tasks 
                 GROUP BY status
-            """).fetchall()
+            """)).fetchall()
             
             stats['by_status'] = {row.status: row.count for row in status_stats}
             
             # 按任务类型统计
-            type_stats = self.db.execute("""
+            type_stats = self.db.execute(text("""
                 SELECT task_type, COUNT(*) as count
                 FROM pending_tasks 
                 WHERE status = 'pending'
                 GROUP BY task_type
-            """).fetchall()
+            """)).fetchall()
             
             stats['by_type'] = {row.task_type: row.count for row in type_stats}
             
             # 重复任务统计
-            duplicate_stats = self.db.execute("""
+            duplicate_stats = self.db.execute(text("""
                 SELECT file_id, task_type, COUNT(*) as count
                 FROM pending_tasks 
                 WHERE status = 'pending'
                 GROUP BY file_id, task_type
                 HAVING COUNT(*) > 1
-            """).fetchall()
+            """)).fetchall()
             
             stats['duplicates'] = len(duplicate_stats)
             stats['total_duplicate_tasks'] = sum(row.count - 1 for row in duplicate_stats)

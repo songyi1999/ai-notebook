@@ -129,6 +129,19 @@ export interface ChatResponse {
     error?: string;
 }
 
+// 系统状态相关接口
+export interface SystemStatus {
+    total_files: number;
+    total_embeddings: number;
+    pending_tasks: number;
+    task_details: {
+        by_status: Record<string, number>;
+        by_type: Record<string, number>;
+        pending_details: Record<string, number>;
+    };
+    last_updated: string;
+}
+
 // API客户端类
 export class ApiClient {
     private baseUrl: string;
@@ -402,6 +415,12 @@ export class ApiClient {
 
         return response.json();
     }
+
+    // 获取系统状态
+    async getSystemStatus(): Promise<SystemStatus> {
+        const response = await this.request<{ success: boolean; data: SystemStatus }>('/index/system-status');
+        return response.data;
+    }
 }
 
 // 创建默认API客户端实例
@@ -453,4 +472,5 @@ export const getAIStatus = (...args: Parameters<ApiClient['getAIStatus']>) => ap
 export const healthCheck = (...args: Parameters<ApiClient['healthCheck']>) => apiClient.healthCheck(...args);
 export const deleteFileByPath = (...args: Parameters<ApiClient['deleteFileByPath']>) => apiClient.deleteFileByPath(...args);
 export const rebuildIndex = (...args: Parameters<ApiClient['rebuildIndex']>) => apiClient.rebuildIndex(...args);
-export const chat = (...args: Parameters<ApiClient['chat']>) => apiClient.chat(...args); 
+export const chat = (...args: Parameters<ApiClient['chat']>) => apiClient.chat(...args);
+export const getSystemStatus = (...args: Parameters<ApiClient['getSystemStatus']>) => apiClient.getSystemStatus(...args); 

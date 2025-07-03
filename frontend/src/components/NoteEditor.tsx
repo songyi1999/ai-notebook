@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Input, Space, message, Tabs, Typography, Spin } from 'antd';
-import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined } from '@ant-design/icons';
+import { Button, Input, Space, message, Tabs, Typography, Spin, Divider } from 'antd';
+import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
-import { apiClient } from '../services/api';
+import { apiClient, SystemStatus } from '../services/api';
 
 const { Text } = Typography;
 
@@ -102,6 +102,8 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   const [isModified, setIsModified] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   const [activeTab, setActiveTab] = useState('edit');
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
   
 
 
@@ -393,16 +395,19 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     return chineseCount + englishCount;
   };
 
-  // 格式化时间
+  // 格式化时间 - 修复为使用本地时区
   const formatTime = (timestamp?: string) => {
     if (!timestamp) return '未知';
     try {
-      return new Date(timestamp).toLocaleString('zh-CN', {
+      // 创建Date对象时会自动转换为本地时区
+      const date = new Date(timestamp);
+      return date.toLocaleString('zh-CN', {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        timeZone: 'Asia/Shanghai' // 明确指定东8区
       });
     } catch {
       return '格式错误';
@@ -424,6 +429,33 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     return `${fileSize.toFixed(1)} ${units[unitIndex]}`;
   };
 
+  // 获取系统状态
+  const loadSystemStatus = useCallback(async () => {
+    try {
+      setStatusLoading(true);
+      const status = await apiClient.getSystemStatus();
+      setSystemStatus(status);
+    } catch (error) {
+      console.error('获取系统状态失败:', error);
+      // 静默失败，不显示错误消息
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  // 定期更新系统状态
+  useEffect(() => {
+    // 初始加载
+    loadSystemStatus();
+    
+    // 每30秒更新一次系统状态
+    const statusInterval = setInterval(loadSystemStatus, 30000);
+    
+    return () => {
+      clearInterval(statusInterval);
+    };
+  }, [loadSystemStatus]);
+
   return (
     <div style={{ 
       display: 'flex', 
@@ -443,7 +475,14 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
             placeholder="输入笔记标题..."
             value={currentNote?.title || ''}
             onChange={handleTitleChange}
-            style={{ fontSize: '16px', fontWeight: '500', border: 'none', boxShadow: 'none' }}
+            style={{ 
+              fontSize: '16px', 
+              fontWeight: '500', 
+              border: 'none', 
+              boxShadow: 'none',
+              width: '400px',  // 增加宽度到400px（约为原来的两倍）
+              maxWidth: '60%'  // 设置最大宽度，避免在小屏幕上过宽
+            }}
           />
         </Space>
       </div>
@@ -532,7 +571,7 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
         />
       </div>
 
-      {/* 底部文件信息栏 - 修改样式 */}
+      {/* 底部文件信息栏 - 修改样式并添加系统状态 */}
       <div style={{
         padding: '8px 16px',
         borderTop: '1px solid #d9d9d9',
@@ -541,22 +580,55 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
         color: '#333',
         display: 'flex',
         alignItems: 'center',
+        justifyContent: 'space-between',
         boxShadow: '0 -1px 2px rgba(0,0,0,0.1)',
         minHeight: '32px',
         flexShrink: 0,
         overflow: 'auto'
       }}>
-        <Space split={<span style={{ color: '#d9d9d9' }}>|</span>} size="small">
-          <span>字数: {getWordCount()}</span>
-          <span>路径: {currentNote.file_path}</span>
-          <span>大小: {formatFileSize(currentNote.file_size)}</span>
-          {currentNote.created_at && (
-            <span>创建: {formatTime(currentNote.created_at)}</span>
+        {/* 左侧：文件信息 */}
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <Space split={<span style={{ color: '#d9d9d9' }}>|</span>} size="small">
+            <span>字数: {getWordCount()}</span>
+            <span>路径: {currentNote.file_path}</span>
+            <span>大小: {formatFileSize(currentNote.file_size)}</span>
+            {currentNote.created_at && (
+              <span>创建: {formatTime(currentNote.created_at)}</span>
+            )}
+            {currentNote.updated_at && (
+              <span>修改: {formatTime(currentNote.updated_at)}</span>
+            )}
+          </Space>
+        </div>
+
+        {/* 右侧：系统状态 */}
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          {statusLoading ? (
+            <Spin indicator={<SyncOutlined spin />} size="small" />
+          ) : systemStatus ? (
+            <Space split={<Divider type="vertical" />} size="small">
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <FileTextOutlined style={{ color: '#1890ff' }} />
+                文件: {systemStatus.total_files}
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <DatabaseOutlined style={{ color: '#52c41a' }} />
+                嵌入: {systemStatus.total_embeddings}
+              </span>
+              <span style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '4px',
+                color: systemStatus.pending_tasks > 0 ? '#fa8c16' : '#52c41a'
+              }}>
+                <ClockCircleOutlined />
+                待索引: {systemStatus.pending_tasks}
+              </span>
+            </Space>
+          ) : (
+            <Text type="secondary" style={{ fontSize: '12px' }}>系统状态加载中...</Text>
           )}
-          {currentNote.updated_at && (
-            <span>修改: {formatTime(currentNote.updated_at)}</span>
-          )}
-        </Space>
+        </div>
       </div>
 
 

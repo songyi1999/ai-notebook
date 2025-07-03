@@ -470,15 +470,6 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
               />
             </Tooltip>
           </Space>
-          {/* 显示当前选中的文件夹 */}
-          <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
-            当前目录: {selectedFolderPath}
-            {selectedKeys.length > 0 && (
-              <span style={{ marginLeft: 16, color: '#1890ff' }}>
-                已选中: {selectedKeys[0].toString()}
-              </span>
-            )}
-          </div>
         </div>
 
         <Tree

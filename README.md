@@ -700,6 +700,14 @@ uvicorn main:app --reload
 | `delete_file()` | `file_id: int` | `Optional[File]` | 软删除文件 |
 | `hard_delete_file()` | `file_id: int` | `Optional[File]` | 硬删除文件 |
 | `search_files()` | `query_str: str, skip: int=0, limit: int=100` | `List[File]` | LIKE模糊搜索，用于关键词搜索 |
+| `_add_vector_index_task()` | `file: File` | `None` | 添加向量索引任务到队列，并自动检查启动索引进程 |
+| `_ensure_task_processor_running()` | `task_processor: TaskProcessorService` | `None` | 确保任务处理器正在运行，如果没有运行则启动后台线程处理 |
+
+**新增功能特性**：
+- **智能索引启动**：文件创建或修改时，系统会自动检查索引进程状态
+- **按需启动**：如果没有索引进程在运行，会自动启动后台线程处理任务队列
+- **避免重复执行**：使用文件锁机制防止多个索引进程同时运行
+- **非阻塞处理**：索引处理在独立的后台线程中进行，不影响文件保存操作
 
 #### AI服务 (backend/app/services/ai_service.py)
 
@@ -1196,3 +1204,110 @@ docker-compose -f docker-compose.prod.yml up -d
 - `getSearchHistory(limit)`: 获取搜索历史
 - `getPopularQueries(limit)`: 获取热门查询 
 - `discoverSmartLinks(fileId)`: 智能发现文章间的链接关系
+
+---
+
+## 🚀 新手安装最简教程
+
+> **3分钟快速上手AI笔记本系统**
+
+### 📋 前置条件
+
+只需要安装以下软件：
+- **Docker Desktop** - [下载地址](https://www.docker.com/products/docker-desktop/)
+- **Ollama** - [下载地址](https://ollama.ai/download)
+
+### ⚡ 一键启动（推荐）
+
+```bash
+# 1. 克隆项目
+git clone <repository-url>
+cd AI笔记本项目
+
+# 2. 一键启动所有服务
+docker-compose up -d
+
+# 3. 访问应用
+# 前端界面：http://localhost:3000
+# API文档：http://localhost:8000/docs
+```
+
+### 🤖 AI功能配置
+
+为了使用AI问答和语义搜索功能，需要配置本地LLM：
+
+```bash
+# 1. 启动Ollama（如果还没启动）
+ollama serve
+
+# 2. 下载中文嵌入模型（用于语义搜索）
+ollama pull quentinz/bge-large-zh-v1.5:latest
+
+# 3. 下载对话模型（用于AI问答）
+ollama pull qwen2.5:0.5b
+```
+
+### 📝 开始使用
+
+1. **打开浏览器** → 访问 http://localhost:3000
+2. **创建笔记** → 点击左侧"+"按钮创建第一篇笔记
+3. **编写内容** → 使用Markdown格式编写笔记
+4. **智能搜索** → 按`Ctrl+K`打开搜索，体验语义搜索
+5. **AI问答** → 按`Ctrl+/`打开AI助手，基于笔记内容提问
+
+### 🔧 常见问题
+
+#### Q: Docker启动失败？
+```bash
+# 检查Docker是否正常运行
+docker --version
+docker-compose --version
+
+# 重新构建并启动
+docker-compose down && docker-compose up -d --build
+```
+
+#### Q: AI功能不可用？
+```bash
+# 检查Ollama服务状态
+curl http://localhost:11434/api/tags
+
+# 如果无响应，重启Ollama
+ollama serve
+```
+
+#### Q: 如何导入现有笔记？
+1. 将Markdown文件复制到 `notes/` 目录
+2. 在应用中点击"刷新"按钮
+3. 系统会自动扫描并建立索引
+
+### 🎯 核心功能体验
+
+| 功能 | 快捷键 | 说明 |
+|------|--------|------|
+| 搜索笔记 | `Ctrl+K` | 支持关键词和语义搜索 |
+| AI问答 | `Ctrl+/` | 基于笔记内容的智能问答 |
+| 保存笔记 | `Ctrl+S` | 手动保存当前笔记 |
+| 新建文件 | 点击`+` | 在文件树中新建笔记 |
+| 标签管理 | 右侧抽屉 | 为笔记添加智能标签 |
+| 链接管理 | 右侧抽屉 | 建立笔记间的关联关系 |
+
+### 💡 使用技巧
+
+1. **语义搜索**：尝试用自然语言描述要找的内容，如"关于机器学习的笔记"
+2. **AI问答**：可以问"总结一下我关于Python的学习笔记"这样的问题
+3. **双向链接**：在笔记中使用`[[文件名]]`语法创建链接
+4. **自动保存**：系统每30秒自动保存，无需担心丢失内容
+5. **批量导入**：直接将文件夹复制到`notes/`目录即可批量导入
+
+### 🆘 获取帮助
+
+- **项目文档**：查看 [GETTING_STARTED.md](GETTING_STARTED.md) 获取详细说明
+- **API文档**：访问 http://localhost:8000/docs 查看完整API
+- **问题反馈**：在GitHub Issues中提交问题和建议
+
+---
+
+**🎉 恭喜！你已经成功搭建了属于自己的AI笔记本系统！**
+
+现在可以开始创建笔记，体验AI增强的知识管理功能了。
