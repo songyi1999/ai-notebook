@@ -22,6 +22,7 @@ from ..models.embedding import Embedding
 from ..models.tag import Tag
 from ..config import settings
 from .mcp_service import MCPClientService
+from ..schemas.mcp import MCPToolCallRequest
 
 logger = logging.getLogger(__name__)
 
@@ -847,18 +848,20 @@ class AIService:
                             
                             # 执行工具调用
                             import asyncio
-                            result = asyncio.run(self.mcp_service.call_tool(
+                            
+                            request = MCPToolCallRequest(
                                 tool_name=tool_name,
                                 arguments=tool_args,
                                 session_id=f"chat_{int(time.time())}"
-                            ))
+                            )
+                            result = asyncio.run(self.mcp_service.call_tool(request))
                             
                             tool_results.append({
                                 "tool_name": tool_name,
                                 "arguments": tool_args,
                                 "result": result.result if result.success else result.error,
                                 "success": result.success,
-                                "execution_time": result.execution_time
+                                "execution_time": result.execution_time_ms
                             })
                             
                             tool_calls_history.append({
@@ -866,7 +869,7 @@ class AIService:
                                 "arguments": tool_args,
                                 "result": result.result if result.success else result.error,
                                 "success": result.success,
-                                "execution_time": result.execution_time
+                                "execution_time": result.execution_time_ms
                             })
                             
                         except Exception as e:
@@ -1051,18 +1054,19 @@ class AIService:
                             logger.info(f"调用工具: {tool_name}, 参数: {tool_args}")
                             
                             # 执行工具调用
-                            result = await self.mcp_service.call_tool(
+                            request = MCPToolCallRequest(
                                 tool_name=tool_name,
                                 arguments=tool_args,
                                 session_id=f"stream_chat_{int(time.time())}"
                             )
+                            result = await self.mcp_service.call_tool(request)
                             
                             tool_result = {
                                 "tool_name": tool_name,
                                 "arguments": tool_args,
                                 "result": result.result if result.success else result.error,
                                 "success": result.success,
-                                "execution_time": result.execution_time
+                                "execution_time": result.execution_time_ms
                             }
                             
                             tool_results.append(tool_result)

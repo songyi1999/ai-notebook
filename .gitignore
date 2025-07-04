@@ -9,7 +9,7 @@
 data/
 *.db
 *.sqlite
-
+参考/
 notes/
 .env
 

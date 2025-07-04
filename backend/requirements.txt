@@ -10,8 +10,9 @@ alembic>=1.12.1
 langchain>=0.1.0
 langchain-openai>=0.0.5
 langchain-chroma>=0.1.2
+langchain-community>=0.0.20
 chromadb>=0.4.18
-
+docx2txt
 # MCP (Model Context Protocol)
 fastmcp>=2.0.0
 
@@ -31,6 +32,7 @@ python-dotenv>=1.0.0
 # 文件处理
 python-multipart>=0.0.6
 aiofiles>=23.2.1
+chardet>=5.2.0
 
 # 工具类
 pathlib2>=2.3.7

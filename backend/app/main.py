@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database.init_db import init_db
-from .api import files, links, tags, ai, index, tasks, mcp
+from .api import files, links, tags, ai, index, mcp, file_upload
 from .config import settings
 import logging
 
@@ -68,8 +68,8 @@ app.include_router(links.router, prefix=settings.api_prefix, tags=["links"])
 app.include_router(tags.router, prefix=settings.api_prefix, tags=["tags"])
 app.include_router(ai.router, prefix=settings.api_prefix, tags=["ai"])
 app.include_router(index.router, prefix=f"{settings.api_prefix}/index", tags=["index"])
-app.include_router(tasks.router, prefix=settings.api_prefix, tags=["tasks"])
 app.include_router(mcp.router, prefix=settings.api_prefix, tags=["mcp"])
+app.include_router(file_upload.router, prefix=f"{settings.api_prefix}/file-upload", tags=["file-upload"])
 
 @app.get("/")
 async def root():

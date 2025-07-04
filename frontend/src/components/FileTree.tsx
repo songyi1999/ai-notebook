@@ -9,7 +9,11 @@ import {
   Typography,
   Spin,
   Tooltip,
-  Dropdown
+  Dropdown,
+  Progress,
+  List,
+  Tag,
+  Alert
 } from 'antd';
 import { 
   FolderOutlined, 
@@ -19,11 +23,15 @@ import {
   EditOutlined,
   DeleteOutlined,
   ReloadOutlined,
-  DatabaseOutlined
+  DatabaseOutlined,
+  UploadOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  ExclamationCircleOutlined
 } from '@ant-design/icons';
 import type { DataNode, TreeProps } from 'antd/es/tree';
 import type { MenuProps } from 'antd';
-import { apiClient, FileTreeNode } from '../services/api';
+import { apiClient, FileTreeNode, uploadAndConvertFiles, getSupportedFormats, FileUploadResponse } from '../services/api';
 
 const { Text } = Typography;
 
@@ -53,6 +61,29 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
   const [renameNodeKey, setRenameNodeKey] = useState('');
   const [newName, setNewName] = useState('');
 
+  // 文件拖拽上传状态
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragCounter, setDragCounter] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState<{
+    visible: boolean;
+    current: number;
+    total: number;
+    fileName: string;
+  }>({
+    visible: false,
+    current: 0,
+    total: 0,
+    fileName: ''
+  });
+  
+  // 上传结果状态
+  const [uploadResult, setUploadResult] = useState<FileUploadResponse | null>(null);
+  const [isResultModalVisible, setIsResultModalVisible] = useState(false);
+  
+  // 支持的文件格式
+  const [supportedFormats, setSupportedFormats] = useState<string[]>([]);
+  const [maxFileSize, setMaxFileSize] = useState(50);
+
   // 当父组件传入的 selectedFile 改变时同步状态
   useEffect(() => {
     if (selectedFile) {
@@ -76,8 +107,9 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
     try {
       // 调用后端API获取文件树
       const fileTreeNodes = await apiClient.getFileTree('notes');
-      setTreeData(convertToTreeData(fileTreeNodes));
-      console.log('文件树加载完成:', treeData);
+      const treeDataNodes = convertToTreeData(fileTreeNodes);
+      setTreeData(treeDataNodes);
+      console.log('文件树加载完成:', treeDataNodes);
     } catch (error) {
       console.error('加载文件树失败:', error);
       
@@ -108,7 +140,22 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
   // 初始化加载
   useEffect(() => {
     loadFileTree();
+    loadSupportedFormats();
   }, []);
+
+  // 加载支持的文件格式
+  const loadSupportedFormats = async () => {
+    try {
+      const formats = await getSupportedFormats();
+      setSupportedFormats(formats.supported_extensions);
+      setMaxFileSize(formats.max_file_size_mb);
+    } catch (error) {
+      console.error('获取支持格式失败:', error);
+      // 设置默认值
+      setSupportedFormats(['.txt', '.md', '.docx', '.pdf']);
+      setMaxFileSize(50);
+    }
+  };
 
   // 处理文件选择
   const handleSelect = (keys: React.Key[], info: any) => {
@@ -143,6 +190,121 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
     
     // 阻止事件冒泡，避免触发其他事件
     e.stopPropagation();
+  };
+
+  // 检查文件是否支持
+  const isFileSupported = (fileName: string): boolean => {
+    const ext = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
+    return supportedFormats.includes(ext);
+  };
+
+  // 处理文件拖拽进入
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragCounter(prev => prev + 1);
+    
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true);
+    }
+  };
+
+  // 处理文件拖拽离开
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragCounter(prev => prev - 1);
+    
+    if (dragCounter <= 1) {
+      setIsDragging(false);
+    }
+  };
+
+  // 处理文件拖拽悬停
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  // 处理文件拖拽放置
+  const handleFileDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    setIsDragging(false);
+    setDragCounter(0);
+    
+    const files = Array.from(e.dataTransfer.files);
+    
+    if (files.length === 0) {
+      return;
+    }
+
+    // 过滤支持的文件
+    const supportedFiles = files.filter(file => isFileSupported(file.name));
+    const unsupportedFiles = files.filter(file => !isFileSupported(file.name));
+
+    if (unsupportedFiles.length > 0) {
+      message.warning(`跳过 ${unsupportedFiles.length} 个不支持的文件，支持的格式：${supportedFormats.join(', ')}`);
+    }
+
+    if (supportedFiles.length === 0) {
+      message.error('没有可转换的文件');
+      return;
+    }
+
+    // 检查文件大小
+    const oversizedFiles = supportedFiles.filter(file => file.size > maxFileSize * 1024 * 1024);
+    if (oversizedFiles.length > 0) {
+      message.error(`有 ${oversizedFiles.length} 个文件超过大小限制 (${maxFileSize}MB)`);
+      return;
+    }
+
+    // 开始上传转换
+    await uploadFiles(supportedFiles);
+  };
+
+  // 上传文件
+  const uploadFiles = async (files: File[]) => {
+    try {
+      // 显示进度
+      setUploadProgress({
+        visible: true,
+        current: 0,
+        total: files.length,
+        fileName: files[0].name
+      });
+
+      // 使用选中的文件夹路径作为目标路径
+      const targetFolder = selectedFolderPath === 'notes' ? '' : selectedFolderPath.replace('notes/', '');
+      
+      // 调用上传API
+      const result = await uploadAndConvertFiles(files, targetFolder);
+      
+      // 隐藏进度
+      setUploadProgress(prev => ({ ...prev, visible: false }));
+      
+      // 显示结果
+      setUploadResult(result);
+      setIsResultModalVisible(true);
+      
+      // 如果有成功转换的文件，刷新文件树
+      if (result.summary.successful_count > 0) {
+        await loadFileTree();
+        
+        // 展开目标目录
+        const targetPath = selectedFolderPath;
+        if (!expandedKeys.includes(targetPath)) {
+          setExpandedKeys(prev => [...prev, targetPath]);
+        }
+      }
+      
+    } catch (error) {
+      console.error('文件上传失败:', error);
+      setUploadProgress(prev => ({ ...prev, visible: false }));
+      message.error(`文件上传失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
   };
 
   // 创建文件/目录
@@ -472,16 +634,101 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
           </Space>
         </div>
 
-        <Tree
-          treeData={treeData}
-          onSelect={handleSelect}
-          selectedKeys={selectedKeys}
-          expandedKeys={expandedKeys}
-          onExpand={keys => setExpandedKeys(keys)}
-          titleRender={renderTitle}
-          draggable
-          onDrop={onDrop}
-        />
+        {/* 文件拖拽上传区域 */}
+        <div
+          style={{
+            position: 'relative',
+            border: isDragging ? '2px dashed #1890ff' : '1px solid transparent',
+            borderRadius: '8px',
+            backgroundColor: isDragging ? '#f0f9ff' : 'transparent',
+            padding: isDragging ? '8px' : '0',
+            transition: 'all 0.3s ease',
+            minHeight: '300px'
+          }}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleFileDrop}
+        >
+          {/* 拖拽提示层 */}
+          {isDragging && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(24, 144, 255, 0.1)',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
+                pointerEvents: 'none'
+              }}
+            >
+              <div style={{ textAlign: 'center', color: '#1890ff' }}>
+                <UploadOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
+                <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                  拖拽文件到这里
+                </div>
+                <div style={{ fontSize: '14px', marginTop: '8px' }}>
+                  支持: {supportedFormats.join(', ')} (最大 {maxFileSize}MB)
+                </div>
+                <div style={{ fontSize: '12px', marginTop: '4px', color: '#666' }}>
+                  将保存到: {selectedFolderPath}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 文件树 */}
+          <Tree
+            treeData={treeData}
+            onSelect={handleSelect}
+            selectedKeys={selectedKeys}
+            expandedKeys={expandedKeys}
+            onExpand={keys => setExpandedKeys(keys)}
+            titleRender={renderTitle}
+            draggable
+            onDrop={onDrop}
+          />
+        </div>
+
+        {/* 上传进度 */}
+        {uploadProgress.visible && (
+          <div
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              backgroundColor: 'white',
+              padding: '24px',
+              borderRadius: '8px',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+              zIndex: 1001,
+              minWidth: '300px',
+              textAlign: 'center'
+            }}
+          >
+            <div style={{ marginBottom: '16px' }}>
+              <UploadOutlined style={{ fontSize: '24px', color: '#1890ff' }} />
+              <div style={{ fontSize: '16px', fontWeight: 'bold', marginTop: '8px' }}>
+                正在上传转换文件
+              </div>
+              <div style={{ fontSize: '14px', color: '#666', marginTop: '4px' }}>
+                {uploadProgress.fileName}
+              </div>
+            </div>
+            <Progress
+              percent={Math.round((uploadProgress.current / uploadProgress.total) * 100)}
+              status="active"
+              format={() => `${uploadProgress.current}/${uploadProgress.total}`}
+            />
+          </div>
+        )}
 
         {/* 创建文件/文件夹模态框 */}
         <Modal
@@ -518,6 +765,119 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
             onChange={e => setNewName(e.target.value)}
             onPressEnter={handleRename}
           />
+        </Modal>
+
+        {/* 文件上传结果模态框 */}
+        <Modal
+          title="文件上传转换结果"
+          open={isResultModalVisible}
+          onOk={() => setIsResultModalVisible(false)}
+          onCancel={() => setIsResultModalVisible(false)}
+          width={700}
+          footer={[
+            <Button key="ok" type="primary" onClick={() => setIsResultModalVisible(false)}>
+              确定
+            </Button>
+          ]}
+        >
+          {uploadResult && (
+            <div>
+              {/* 汇总信息 */}
+              <Alert
+                message={`处理完成: 共 ${uploadResult.summary.total_files} 个文件`}
+                description={
+                  <div style={{ marginTop: '8px' }}>
+                    <div>✅ 成功转换: {uploadResult.summary.successful_count} 个</div>
+                    <div>❌ 转换失败: {uploadResult.summary.failed_count} 个</div>
+                    <div>⏭️ 格式跳过: {uploadResult.summary.ignored_count} 个</div>
+                    <div>💾 数据库记录: {uploadResult.summary.created_db_records} 个</div>
+                    {uploadResult.target_folder && (
+                      <div>📁 目标文件夹: {uploadResult.target_folder}</div>
+                    )}
+                  </div>
+                }
+                type={uploadResult.summary.failed_count > 0 ? 'warning' : 'success'}
+                showIcon
+                style={{ marginBottom: '16px' }}
+              />
+
+              {/* 成功转换的文件 */}
+              {uploadResult.details.successful_conversions.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <Text strong>✅ 成功转换的文件:</Text>
+                  <List
+                    size="small"
+                    dataSource={uploadResult.details.successful_conversions}
+                    renderItem={(item) => (
+                      <List.Item>
+                        <div style={{ width: '100%' }}>
+                          <div>
+                            <CheckCircleOutlined style={{ color: '#52c41a', marginRight: '8px' }} />
+                            <Text strong>{item.original_filename}</Text>
+                            <Text type="secondary" style={{ marginLeft: '8px' }}>
+                              → {item.converted_filename}
+                            </Text>
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                            <Tag color="blue">{item.file_type}</Tag>
+                            <span>{(item.content_length || 0)} 字符</span>
+                          </div>
+                        </div>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              )}
+
+              {/* 转换失败的文件 */}
+              {uploadResult.details.failed_conversions.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <Text strong>❌ 转换失败的文件:</Text>
+                  <List
+                    size="small"
+                    dataSource={uploadResult.details.failed_conversions}
+                    renderItem={(item) => (
+                      <List.Item>
+                        <div style={{ width: '100%' }}>
+                          <div>
+                            <CloseCircleOutlined style={{ color: '#ff4d4f', marginRight: '8px' }} />
+                            <Text strong>{item.original_filename}</Text>
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#ff4d4f', marginTop: '4px' }}>
+                            {item.error}
+                          </div>
+                        </div>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              )}
+
+              {/* 被跳过的文件 */}
+              {uploadResult.details.ignored_files.length > 0 && (
+                <div>
+                  <Text strong>⏭️ 被跳过的文件:</Text>
+                  <List
+                    size="small"
+                    dataSource={uploadResult.details.ignored_files}
+                    renderItem={(item) => (
+                      <List.Item>
+                        <div style={{ width: '100%' }}>
+                          <div>
+                            <ExclamationCircleOutlined style={{ color: '#faad14', marginRight: '8px' }} />
+                            <Text strong>{item.filename}</Text>
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#faad14', marginTop: '4px' }}>
+                            {item.reason}
+                          </div>
+                        </div>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </Modal>
       </Spin>
     </div>

@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Layout, Button, Space, Tooltip, Menu } from 'antd';
+import { Layout, Button, Space, Tooltip } from 'antd';
 import { 
   SearchOutlined, 
   MenuFoldOutlined, 
   MenuUnfoldOutlined, 
-  RobotOutlined,
-  FileTextOutlined
+  RobotOutlined
 } from '@ant-design/icons';
-import { useNavigate, useLocation } from 'react-router-dom';
+
 import NoteEditor from './components/NoteEditor';
 import FileTree from './components/FileTree';
 import ResizableSider from './components/ResizableSider';
@@ -16,7 +15,7 @@ import SearchModal from './components/SearchModal';
 import ChatModal from './components/ChatModal';
 import './App.css';
 
-const { Header, Content, Sider } = Layout;
+const { Header, Content } = Layout;
 
 // 主布局组件
 const MainLayout: React.FC = () => {
@@ -29,15 +28,10 @@ const MainLayout: React.FC = () => {
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [chatModalVisible, setChatModalVisible] = useState(false);
   
-  const navigate = useNavigate();
-  const location = useLocation();
+
 
   const handleFileSelect = (filePath: string, fileName: string) => {
     setCurrentFile({ path: filePath, name: fileName });
-    // 选择文件时导航到笔记页面
-    if (location.pathname !== '/') {
-      navigate('/');
-    }
   };
 
   const handleSearchModalOpen = () => {
@@ -62,22 +56,8 @@ const MainLayout: React.FC = () => {
 
   // 获取当前页面标题
   const getPageTitle = () => {
-    switch (location.pathname) {
-      case '/':
-        return 'AI笔记本';
-      default:
-        return 'AI笔记本';
-    }
+    return 'AI笔记本';
   };
-
-  // 菜单项
-  const menuItems = [
-    {
-      key: '/',
-      icon: <FileTextOutlined />,
-      label: '笔记编辑',
-    }
-  ];
 
   // 添加全局快捷键支持
   useEffect(() => {
@@ -170,31 +150,8 @@ const MainLayout: React.FC = () => {
         overflow: 'hidden',
         display: 'flex'
       }}>
-        {/* 左侧导航 */}
+        {/* 文件树侧边栏 */}
         {!siderCollapsed && (
-          <Sider 
-            width={80}
-            style={{
-              background: '#fafafa',
-              borderRight: '1px solid #f0f0f0',
-            }}
-          >
-            <Menu
-              mode="inline"
-              selectedKeys={[location.pathname]}
-              items={menuItems}
-              onClick={({ key }) => navigate(key)}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                marginTop: '16px'
-              }}
-            />
-          </Sider>
-        )}
-
-        {/* 文件树侧边栏（仅在笔记页面显示） */}
-        {!siderCollapsed && location.pathname === '/' && (
           <ResizableSider
             width={siderWidth}
             onResize={setSiderWidth}

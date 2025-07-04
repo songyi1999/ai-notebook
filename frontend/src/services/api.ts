@@ -220,6 +220,50 @@ export interface SystemStatus {
     last_updated: string;
 }
 
+// 文件上传转换相关接口
+export interface FileUploadResult {
+    success: boolean;
+    original_filename: string;
+    converted_filename?: string;
+    target_path?: string;
+    content_length?: number;
+    file_type?: string;
+    error?: string;
+}
+
+export interface FileUploadSummary {
+    total_files: number;
+    processed_count: number;
+    successful_count: number;
+    failed_count: number;
+    ignored_count: number;
+    created_db_records: number;
+}
+
+export interface FileUploadResponse {
+    success: boolean;
+    message: string;
+    summary: FileUploadSummary;
+    details: {
+        successful_conversions: FileUploadResult[];
+        failed_conversions: FileUploadResult[];
+        ignored_files: Array<{ filename: string; reason: string }>;
+        created_files: Array<{
+            file_id: number;
+            file_path: string;
+            original_filename: string;
+            converted_filename: string;
+        }>;
+    };
+    target_folder: string;
+}
+
+export interface SupportedFormatsResponse {
+    supported_extensions: string[];
+    max_file_size_mb: number;
+    description: Record<string, string>;
+}
+
 // API客户端类
 export class ApiClient {
     private baseUrl: string;
@@ -508,6 +552,38 @@ export class ApiClient {
         const response = await this.request<{ success: boolean; data: SystemStatus }>('/index/system-status');
         return response.data;
     }
+
+    // 文件上传转换API
+    async uploadAndConvertFiles(files: File[], targetFolder?: string): Promise<FileUploadResponse> {
+        const formData = new FormData();
+
+        // 添加文件
+        files.forEach((file) => {
+            formData.append('files', file);
+        });
+
+        // 添加目标文件夹
+        if (targetFolder) {
+            formData.append('target_folder', targetFolder);
+        }
+
+        const response = await fetch(`${this.baseUrl}/file-upload/upload-and-convert`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || '文件上传转换失败');
+        }
+
+        return response.json();
+    }
+
+    // 获取支持的文件格式
+    async getSupportedFormats(): Promise<SupportedFormatsResponse> {
+        return this.request<SupportedFormatsResponse>('/file-upload/supported-formats');
+    }
 }
 
 // 创建默认API客户端实例
@@ -562,6 +638,10 @@ export const deleteFileByPath = (...args: Parameters<ApiClient['deleteFileByPath
 export const rebuildIndex = (...args: Parameters<ApiClient['rebuildIndex']>) => apiClient.rebuildIndex(...args);
 export const chat = (...args: Parameters<ApiClient['chat']>) => apiClient.chat(...args);
 export const getSystemStatus = (...args: Parameters<ApiClient['getSystemStatus']>) => apiClient.getSystemStatus(...args);
+
+// 文件上传转换导出
+export const uploadAndConvertFiles = (...args: Parameters<ApiClient['uploadAndConvertFiles']>) => apiClient.uploadAndConvertFiles(...args);
+export const getSupportedFormats = (...args: Parameters<ApiClient['getSupportedFormats']>) => apiClient.getSupportedFormats(...args);
 
 // MCP相关API方法
 export const mcpApi = {
