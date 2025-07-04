@@ -190,81 +190,246 @@ class AIService:
         """检查AI服务是否可用"""
         return bool(self.openai_api_key and self.vector_store)
 
-    def create_embeddings(self, file: File) -> bool:
-        """为文件创建向量嵌入 - 使用LangChain简化版本"""
+    def create_embeddings(self, file: File, progress_callback=None) -> bool:
+        """为文件创建向量嵌入 - 使用智能多层次分块"""
         if not self.is_available():
             logger.warning("AI服务不可用，无法创建嵌入")
             return False
         
         try:
-            logger.info(f"开始为文件创建嵌入: {file.file_path}")
+            logger.info(f"开始为文件创建智能嵌入: {file.file_path}")
             
-            # 1. 删除现有的SQLite嵌入记录
-            self.db.query(Embedding).filter(Embedding.file_id == file.id).delete()
+            # 1. 检查是否存在现有的嵌入记录
+            existing_embeddings_count = self.db.query(Embedding).filter(Embedding.file_id == file.id).count()
             
-            # 2. 删除现有的向量存储中的文档
-            try:
-                # 通过元数据过滤删除现有文档
-                existing_docs = self.vector_store.get(
-                    where={"file_id": file.id}
-                )
-                if existing_docs and existing_docs.get('ids'):
-                    self.vector_store.delete(ids=existing_docs['ids'])
-                    logger.info(f"删除文件 {file.id} 的现有向量: {len(existing_docs['ids'])} 个")
-            except Exception as e:
-                logger.warning(f"删除现有向量时出错: {e}")
-            
-            # 3. 分割文本
-            texts = self.text_splitter.split_text(file.content)
-            
-            # 4. 创建LangChain Document对象
-            documents = []
-            for i, text in enumerate(texts):
-                doc = Document(
-                    page_content=text,
-                    metadata={
-                        "file_id": file.id,
-                        "file_path": file.file_path,
-                        "chunk_index": i,
-                        "chunk_hash": hashlib.sha256(text.encode()).hexdigest(),
-                        "title": file.title,
-                        "vector_model": settings.embedding_model_name
-                    }
-                )
-                documents.append(doc)
+            if existing_embeddings_count > 0:
+                logger.info(f"文件 {file.id} 存在 {existing_embeddings_count} 个现有嵌入，需要清理")
                 
-                # 同时保存到SQLite（仅元数据）
-                embedding = Embedding(
-                    file_id=file.id,
-                    chunk_index=i,
-                    chunk_text=text,
-                    chunk_hash=doc.metadata["chunk_hash"],
-                    embedding_vector=b'',  # 空向量，实际向量存储在ChromaDB
-                    vector_model=settings.embedding_model_name
-                )
-                self.db.add(embedding)
+                # 1.1 删除现有的向量存储中的文档（先删除向量存储）
+                try:
+                    existing_docs = self.vector_store.get(
+                        where={"file_id": file.id}
+                    )
+                    if existing_docs and existing_docs.get('ids'):
+                        self.vector_store.delete(ids=existing_docs['ids'])
+                        logger.info(f"从LangChain向量存储删除文件 {file.id} 的文档: {len(existing_docs['ids'])} 个")
+                except Exception as e:
+                    logger.warning(f"删除现有向量存储时出错: {e}")
+                
+                # 1.2 删除现有的SQLite嵌入记录（然后删除SQLite记录）
+                try:
+                    deleted_count = self.db.query(Embedding).filter(Embedding.file_id == file.id).delete()
+                    self.db.commit()  # 立即提交删除操作
+                    logger.info(f"成功删除文件的向量索引: file_id={file.id}, SQLite删除了 {deleted_count} 个记录")
+                except Exception as e:
+                    logger.warning(f"删除SQLite嵌入记录时出错: {e}")
+                    self.db.rollback()
+            else:
+                logger.info(f"文件 {file.id} 没有现有嵌入，直接创建新的")
+                
+            # 等待一小段时间确保删除操作完全完成
+            import time
+            time.sleep(0.1)
             
-            # 5. 批量添加到向量存储
+            # 3. 使用智能多层次分块（每个文件都有汇总提纲）
+            documents = self._create_hierarchical_chunks(file, progress_callback)
+            
+            # 4. 批量添加到向量存储
             if documents:
-                # LangChain会自动处理嵌入生成和存储
-                ids = [f"file_{file.id}_chunk_{doc.metadata['chunk_index']}" for doc in documents]
-                self.vector_store.add_documents(documents, ids=ids)
-                logger.info(f"成功添加 {len(documents)} 个文档到LangChain-Chroma")
+                if progress_callback:
+                    progress_callback("向量存储", f"正在保存 {len(documents)} 个分块到向量数据库")
+                
+                # 分批处理，避免一次性处理过多文档导致超时
+                batch_size = 50  # 每批处理50个文档
+                total_docs = len(documents)
+                logger.info(f"开始分批向量化，总文档数: {total_docs}, 批大小: {batch_size}")
+                
+                for i in range(0, total_docs, batch_size):
+                    batch_start = i
+                    batch_end = min(i + batch_size, total_docs)
+                    batch_docs = documents[batch_start:batch_end]
+                    
+                    try:
+                        # 为当前批次生成ID
+                        batch_ids = [f"file_{file.id}_chunk_{doc.metadata['chunk_index']}_{doc.metadata['chunk_type']}" for doc in batch_docs]
+                        
+                        logger.info(f"正在处理第 {i//batch_size + 1} 批，文档 {batch_start+1}-{batch_end}/{total_docs}")
+                        
+                        if progress_callback:
+                            progress_callback("向量存储", f"正在处理第 {i//batch_size + 1} 批 ({batch_start+1}-{batch_end}/{total_docs})")
+                        
+                        # 保存到ChromaDB
+                        self.vector_store.add_documents(batch_docs, ids=batch_ids)
+                        logger.info(f"✅ 成功保存第 {i//batch_size + 1} 批到ChromaDB，包含 {len(batch_docs)} 个文档")
+                        
+                        # 短暂休息，避免过度占用资源
+                        import time
+                        time.sleep(0.1)
+                        
+                    except Exception as e:
+                        logger.error(f"❌ 保存第 {i//batch_size + 1} 批到ChromaDB失败: {e}")
+                        # 如果某批失败，可以考虑继续处理其他批次，或者直接失败
+                        self.db.rollback()
+                        return False
+                
+                logger.info(f"🎉 成功添加所有 {len(documents)} 个文档到LangChain-Chroma")
             
-            # 6. 提交SQLite事务
-            self.db.commit()
-            logger.info(f"为文件 {file.file_path} 创建了 {len(texts)} 个嵌入向量")
+            # 5. 提交SQLite事务
+            try:
+                self.db.commit()
+                logger.info(f"✅ SQLite事务提交成功，文件: {file.file_path}")
+            except Exception as e:
+                logger.error(f"❌ SQLite事务提交失败: {e}")
+                self.db.rollback()
+                return False
+            
+            if progress_callback:
+                progress_callback("完成", f"智能分块完成，共生成 {len(documents)} 个向量")
+            
+            logger.info(f"为文件 {file.file_path} 创建了 {len(documents)} 个智能嵌入向量")
             return True
             
         except Exception as e:
-            logger.error(f"创建嵌入失败: {e}")
+            logger.error(f"创建智能嵌入失败: {e}")
             import traceback
             logger.error(f"详细错误信息: {traceback.format_exc()}")
             self.db.rollback()
             return False
+    
+
+    
+    def _create_hierarchical_chunks(self, file: File, progress_callback=None) -> List[Document]:
+        """创建智能多层次分块（基于LLM）"""
+        try:
+            from .hierarchical_splitter import IntelligentHierarchicalSplitter
+            
+            if progress_callback:
+                progress_callback("分析中", f"正在分析文件结构和内容")
+            
+            # 创建智能分块器，传入LLM实例
+            splitter = IntelligentHierarchicalSplitter(llm=self.llm)
+            hierarchical_docs = splitter.split_document(file.content, file.title, file.id, progress_callback)
+            
+            all_documents = []
+            
+            # 处理摘要层
+            if progress_callback:
+                progress_callback("摘要生成", f"正在处理文件摘要")
+            for doc in hierarchical_docs.get('summary', []):
+                all_documents.append(doc)
+                self._save_embedding_metadata(doc, file.id)
+            
+            # 处理大纲层
+            if progress_callback:
+                progress_callback("大纲提取", f"正在处理文件大纲")
+            for doc in hierarchical_docs.get('outline', []):
+                all_documents.append(doc)
+                self._save_embedding_metadata(doc, file.id)
+            
+            # 处理内容层
+            if progress_callback:
+                progress_callback("内容分块", f"正在处理内容分块")
+            for doc in hierarchical_docs.get('content', []):
+                all_documents.append(doc)
+                self._save_embedding_metadata(doc, file.id)
+            
+            logger.info(f"智能多层次分块完成: 总共 {len(all_documents)} 个文档")
+            return all_documents
+            
+        except Exception as e:
+            logger.error(f"创建智能多层次分块失败: {e}")
+            # 创建最基本的摘要和内容块（降级策略）
+            if progress_callback:
+                progress_callback("降级处理", f"智能分块失败，使用基本分块策略")
+            return self._create_basic_fallback_chunks(file, progress_callback)
+    
+    def _create_basic_fallback_chunks(self, file: File, progress_callback=None) -> List[Document]:
+        """创建基本的降级分块（确保每个文件都有摘要和内容块）"""
+        try:
+            documents = []
+            
+            # 1. 创建基本摘要块
+            if progress_callback:
+                progress_callback("基本摘要", f"创建基本摘要块")
+            
+            summary_text = f"文件：{file.title}\n内容预览：{file.content[:500]}..."
+            summary_doc = Document(
+                page_content=summary_text,
+                metadata={
+                    "file_id": file.id,
+                    "file_path": file.file_path,
+                    "chunk_index": 0,
+                    "chunk_hash": hashlib.sha256(summary_text.encode()).hexdigest(),
+                    "title": file.title,
+                    "vector_model": settings.embedding_model_name,
+                    "chunk_type": "summary",
+                    "chunk_level": 1,
+                    "parent_heading": None,
+                    "section_path": "基本摘要",
+                    "generation_method": "basic_fallback"
+                }
+            )
+            documents.append(summary_doc)
+            self._save_embedding_metadata(summary_doc, file.id)
+            
+            # 2. 创建内容块
+            if progress_callback:
+                progress_callback("内容分块", f"正在创建内容分块")
+            
+            # 使用文本分割器创建内容块
+            content_chunks = self.text_splitter.split_text(file.content)
+            
+            for i, chunk in enumerate(content_chunks):
+                content_doc = Document(
+                    page_content=chunk,
+                    metadata={
+                        "file_id": file.id,
+                        "file_path": file.file_path,
+                        "chunk_index": i + 1,
+                        "chunk_hash": hashlib.sha256(chunk.encode()).hexdigest(),
+                        "title": file.title,
+                        "vector_model": settings.embedding_model_name,
+                        "chunk_type": "content",
+                        "chunk_level": 3,
+                        "parent_heading": None,
+                        "section_path": f"内容块{i+1}",
+                        "generation_method": "basic_fallback"
+                    }
+                )
+                documents.append(content_doc)
+                self._save_embedding_metadata(content_doc, file.id)
+            
+            logger.info(f"基本分块完成: 1个摘要块 + {len(content_chunks)}个内容块")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"创建基本分块失败: {e}")
+            return []
+
+    def _save_embedding_metadata(self, doc: Document, file_id: int):
+        """保存嵌入元数据到SQLite"""
+        try:
+            # 创建嵌入记录
+            embedding = Embedding(
+                file_id=file_id,
+                chunk_index=doc.metadata['chunk_index'],
+                chunk_hash=doc.metadata['chunk_hash'],
+                vector_model=doc.metadata['vector_model'],
+                chunk_type=doc.metadata.get('chunk_type', 'content'),
+                chunk_level=doc.metadata.get('chunk_level', 1),
+                parent_heading=doc.metadata.get('parent_heading'),
+                section_path=doc.metadata.get('section_path'),
+                generation_method=doc.metadata.get('generation_method', 'hierarchical')
+            )
+            self.db.add(embedding)
+            # 不在这里提交，让上层统一提交
+            
+        except Exception as e:
+            logger.error(f"保存嵌入元数据失败: {e}")
+            raise
 
     def semantic_search(self, query: str, limit: int = 10, similarity_threshold: float = None) -> List[Dict[str, Any]]:
-        """语义搜索 - 使用LangChain简化版本，带缓存优化"""
+        """语义搜索 - 支持多层次检索，带缓存优化"""
         if not self.is_available():
             logger.warning("AI服务不可用，无法进行语义搜索")
             return []
@@ -275,8 +440,27 @@ class AIService:
         
         try:
             start_time = time.time()
-            logger.info(f"开始LangChain语义搜索，查询: {query}, 阈值: {similarity_threshold}")
+            logger.info(f"开始语义搜索，查询: {query}, 阈值: {similarity_threshold}")
             
+            # 检查是否启用多层次检索
+            if settings.enable_hierarchical_chunking:
+                results = self._hierarchical_semantic_search(query, limit, similarity_threshold)
+            else:
+                results = self._traditional_semantic_search(query, limit, similarity_threshold)
+            
+            total_time = time.time() - start_time
+            logger.info(f"语义搜索完成，查询: {query}, 结果: {len(results)}, 总耗时: {total_time:.3f}秒")
+            return results
+            
+        except Exception as e:
+            logger.error(f"语义搜索失败: {e}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
+            return []
+    
+    def _traditional_semantic_search(self, query: str, limit: int, similarity_threshold: float) -> List[Dict[str, Any]]:
+        """传统语义搜索（保持兼容性）"""
+        try:
             # 使用LangChain的similarity_search_with_score方法（带缓存优化）
             search_results = self.vector_store.similarity_search_with_score(
                 query=query,
@@ -284,7 +468,7 @@ class AIService:
                 filter=None  # 可以添加过滤条件
             )
             
-            logger.info(f"LangChain搜索返回 {len(search_results)} 个结果")
+            logger.info(f"传统搜索返回 {len(search_results)} 个结果")
             
             # 处理搜索结果并去重
             results = []
@@ -339,15 +523,176 @@ class AIService:
             for result in results[:limit]:
                 result.pop('distance', None)
             
-            total_time = time.time() - start_time
-            logger.info(f"LangChain语义搜索完成，查询: {query}, 过滤后结果: {len(results)}, 总耗时: {total_time:.3f}秒")
             return results
             
         except Exception as e:
-            logger.error(f"LangChain语义搜索失败: {e}")
-            import traceback
-            logger.error(f"详细错误信息: {traceback.format_exc()}")
+            logger.error(f"传统语义搜索失败: {e}")
             return []
+    
+    def _hierarchical_semantic_search(self, query: str, limit: int, similarity_threshold: float) -> List[Dict[str, Any]]:
+        """多层次语义搜索"""
+        try:
+            logger.info(f"开始多层次语义搜索: {query}")
+            
+            # 多路召回：同时搜索三个层次
+            summary_results = self._search_by_chunk_type(query, "summary", limit//3, similarity_threshold)
+            outline_results = self._search_by_chunk_type(query, "outline", limit//3, similarity_threshold)
+            content_results = self._search_by_chunk_type(query, "content", limit, similarity_threshold)
+            
+            # 智能上下文扩展
+            expanded_results = []
+            
+            # 处理摘要匹配结果
+            for result in summary_results:
+                expanded_results.append(result)
+                # 获取该文件的大纲和内容
+                file_outline = self._get_file_outline(result['file_id'])
+                expanded_results.extend(file_outline[:2])  # 添加前2个大纲项
+            
+            # 处理大纲匹配结果
+            for result in outline_results:
+                expanded_results.append(result)
+                # 获取该章节下的内容块
+                section_content = self._get_section_content(result['file_id'], result.get('section_path'))
+                expanded_results.extend(section_content[:2])  # 添加前2个内容块
+            
+            # 处理内容匹配结果
+            expanded_results.extend(content_results)
+            
+            # 去重并限制结果数量
+            final_results = self._deduplicate_and_rank(expanded_results, limit)
+            
+            logger.info(f"多层次搜索完成: 摘要={len(summary_results)}, 大纲={len(outline_results)}, 内容={len(content_results)}, 最终={len(final_results)}")
+            return final_results
+            
+        except Exception as e:
+            logger.error(f"多层次语义搜索失败: {e}")
+            # 降级到传统搜索
+            return self._traditional_semantic_search(query, limit, similarity_threshold)
+    
+    def _search_by_chunk_type(self, query: str, chunk_type: str, limit: int, similarity_threshold: float) -> List[Dict[str, Any]]:
+        """按分块类型搜索"""
+        try:
+            search_results = self.vector_store.similarity_search_with_score(
+                query=query,
+                k=limit * 2,
+                filter={"chunk_type": chunk_type}
+            )
+            
+            results = []
+            for doc, score in search_results:
+                if score <= similarity_threshold:
+                    file_id = doc.metadata.get('file_id')
+                    if file_id:
+                        file = self.db.query(File).filter(
+                            File.id == file_id,
+                            File.is_deleted == False
+                        ).first()
+                        
+                        if file:
+                            result_item = {
+                                'file_id': file_id,
+                                'file_path': doc.metadata.get('file_path', ''),
+                                'title': doc.metadata.get('title', ''),
+                                'chunk_text': doc.page_content,
+                                'chunk_index': doc.metadata.get('chunk_index', 0),
+                                'chunk_type': chunk_type,
+                                'chunk_level': doc.metadata.get('chunk_level', 3),
+                                'parent_heading': doc.metadata.get('parent_heading'),
+                                'section_path': doc.metadata.get('section_path'),
+                                'similarity': float(1 - score),
+                                'created_at': file.created_at.isoformat() if file.created_at else None,
+                                'updated_at': file.updated_at.isoformat() if file.updated_at else None,
+                            }
+                            results.append(result_item)
+            
+            return results[:limit]
+            
+        except Exception as e:
+            logger.error(f"按类型搜索失败 ({chunk_type}): {e}")
+            return []
+    
+    def _get_file_outline(self, file_id: int) -> List[Dict[str, Any]]:
+        """获取文件的大纲"""
+        try:
+            # 从向量存储中获取该文件的outline类型文档
+            docs = self.vector_store.get(
+                where={"file_id": file_id, "chunk_type": "outline"},
+                limit=10
+            )
+            
+            results = []
+            if docs and docs.get('documents'):
+                for i, doc_content in enumerate(docs['documents']):
+                    metadata = docs['metadatas'][i]
+                    result_item = {
+                        'file_id': file_id,
+                        'file_path': metadata.get('file_path', ''),
+                        'title': metadata.get('title', ''),
+                        'chunk_text': doc_content,
+                        'chunk_index': metadata.get('chunk_index', 0),
+                        'chunk_type': 'outline',
+                        'chunk_level': 2,
+                        'parent_heading': metadata.get('parent_heading'),
+                        'section_path': metadata.get('section_path'),
+                        'similarity': 0.8,  # 上下文相关性
+                    }
+                    results.append(result_item)
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"获取文件大纲失败: {e}")
+            return []
+    
+    def _get_section_content(self, file_id: int, section_path: str) -> List[Dict[str, Any]]:
+        """获取章节内容"""
+        try:
+            # 从向量存储中获取该章节的内容
+            docs = self.vector_store.get(
+                where={"file_id": file_id, "chunk_type": "content", "parent_heading": section_path},
+                limit=5
+            )
+            
+            results = []
+            if docs and docs.get('documents'):
+                for i, doc_content in enumerate(docs['documents']):
+                    metadata = docs['metadatas'][i]
+                    result_item = {
+                        'file_id': file_id,
+                        'file_path': metadata.get('file_path', ''),
+                        'title': metadata.get('title', ''),
+                        'chunk_text': doc_content,
+                        'chunk_index': metadata.get('chunk_index', 0),
+                        'chunk_type': 'content',
+                        'chunk_level': 3,
+                        'parent_heading': metadata.get('parent_heading'),
+                        'section_path': metadata.get('section_path'),
+                        'similarity': 0.7,  # 上下文相关性
+                    }
+                    results.append(result_item)
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"获取章节内容失败: {e}")
+            return []
+    
+    def _deduplicate_and_rank(self, results: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+        """去重并排序"""
+        seen_chunks = set()
+        unique_results = []
+        
+        for result in results:
+            chunk_key = (result['file_id'], result['chunk_index'], result.get('chunk_type', 'content'))
+            if chunk_key not in seen_chunks:
+                seen_chunks.add(chunk_key)
+                unique_results.append(result)
+        
+        # 按相似度排序
+        unique_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+        
+        return unique_results[:limit]
 
     def clear_vector_database(self) -> bool:
         """清空向量数据库"""
@@ -495,7 +840,7 @@ class AIService:
             return None
 
     def suggest_tags(self, title: str, content: str, max_tags: int = 5) -> List[str]:
-        """智能标签建议 - 从预设和数据库现有标签中选择"""
+        """智能标签建议 - 支持多层次分析，从预设和数据库现有标签中选择"""
         if not self.llm:
             logger.warning("LLM不可用，无法生成标签建议")
             return []
@@ -539,7 +884,10 @@ class AIService:
             
             logger.info(f"总共有 {len(candidate_tags)} 个候选标签")
             
-            # 4. 构建提示词，要求从候选标签中选择
+            # 4. 准备分析内容（支持多层次分析）
+            analysis_content = self._prepare_content_for_tagging(title, content)
+            
+            # 5. 构建提示词，要求从候选标签中选择
             candidate_tags_text = "、".join(candidate_tags)
             
             prompt = f"""请从以下候选标签中选择最多{max_tags}个最适合的标签来标记下面的文档。
@@ -548,8 +896,7 @@ class AIService:
 {candidate_tags_text}
 
 **文档信息：**
-标题：{title}
-内容：{content[:1000]}
+{analysis_content}
 
 **要求：**
 1. 只能从上述候选标签列表中选择，不要创造新标签
@@ -590,6 +937,36 @@ class AIService:
             import traceback
             logger.error(f"详细错误信息: {traceback.format_exc()}")
             return []
+    
+    def _prepare_content_for_tagging(self, title: str, content: str) -> str:
+        """为标签生成准备分析内容"""
+        if settings.enable_hierarchical_chunking:
+            # 多层次模式：提取关键信息
+            summary = self._generate_file_summary_for_linking(content, title)
+            
+            # 提取可能的章节标题
+            from .hierarchical_splitter import HierarchicalTextSplitter
+            splitter = HierarchicalTextSplitter()
+            structure = splitter._extract_document_structure(content)
+            
+            sections = []
+            for item in structure[:5]:  # 最多5个章节
+                sections.append(item.get('heading', ''))
+            
+            analysis_parts = [
+                f"标题：{title}",
+                f"文档摘要：{summary[:500]}",
+            ]
+            
+            if sections:
+                analysis_parts.append(f"主要章节：{', '.join(sections)}")
+            
+            analysis_parts.append(f"内容片段：{content[:800]}")
+            
+            return "\n\n".join(analysis_parts)
+        else:
+            # 传统模式
+            return f"标题：{title}\n内容：{content[:1000]}"
 
     def analyze_content(self, content: str) -> Dict[str, Any]:
         """内容分析"""
@@ -653,11 +1030,26 @@ class AIService:
             return []
 
     def discover_smart_links(self, file_id: int, content: str, title: str) -> List[Dict[str, Any]]:
-        """智能链接发现"""
+        """智能链接发现 - 支持多层次链接发现"""
         if not self.llm:
             logger.warning("LLM不可用，无法发现智能链接")
             return []
         
+        try:
+            logger.info(f"开始智能链接发现: {title}")
+            
+            # 检查是否启用多层次模式
+            if settings.enable_hierarchical_chunking:
+                return self._hierarchical_smart_links(file_id, content, title)
+            else:
+                return self._traditional_smart_links(file_id, content, title)
+            
+        except Exception as e:
+            logger.error(f"智能链接发现失败: {e}")
+            return []
+    
+    def _traditional_smart_links(self, file_id: int, content: str, title: str) -> List[Dict[str, Any]]:
+        """传统智能链接发现（保持兼容性）"""
         try:
             # 先通过语义搜索找到相关文档 - 智能链接使用更高的阈值确保链接质量
             link_threshold = max(settings.semantic_search_threshold + 0.2, 0.6)  # 至少0.6，确保链接质量
@@ -677,6 +1069,122 @@ class AIService:
                 logger.info("没有其他相关文档，无法生成智能链接")
                 return []
             
+            return self._generate_links_with_llm(file_id, content, title, files_text, related_results)
+            
+        except Exception as e:
+            logger.error(f"传统智能链接发现失败: {e}")
+            return []
+    
+    def _hierarchical_smart_links(self, file_id: int, content: str, title: str) -> List[Dict[str, Any]]:
+        """多层次智能链接发现"""
+        try:
+            logger.info(f"开始多层次链接发现: {title}")
+            
+            # Step 1: 生成当前文件的摘要用于比较
+            current_summary = self._generate_file_summary_for_linking(content, title)
+            
+            # Step 2: 从摘要层搜索相关文件（文件级别的关联）
+            summary_results = self._search_by_chunk_type(current_summary, "summary", 10, 0.8)
+            
+            # Step 3: 从大纲层搜索相关章节（章节级别的关联）
+            outline_results = self._search_by_chunk_type(content[:800], "outline", 8, 0.7)
+            
+            # Step 4: 智能链接分析
+            candidate_files = {}
+            
+            # 处理文件级别的关联（摘要层匹配）
+            for result in summary_results:
+                if result['file_id'] != file_id:
+                    candidate_files[result['file_id']] = {
+                        'file_id': result['file_id'],
+                        'title': result['title'],
+                        'file_path': result['file_path'],
+                        'link_level': 'file',  # 文件级别关联
+                        'similarity': result['similarity'],
+                        'match_type': 'summary',
+                        'match_content': result['chunk_text']
+                    }
+            
+            # 处理章节级别的关联（大纲层匹配）
+            for result in outline_results:
+                if result['file_id'] != file_id:
+                    file_id_key = result['file_id']
+                    if file_id_key in candidate_files:
+                        # 如果已经有文件级别的关联，升级为章节级别
+                        candidate_files[file_id_key]['link_level'] = 'section'
+                        candidate_files[file_id_key]['section_info'] = {
+                            'section_path': result.get('section_path'),
+                            'parent_heading': result.get('parent_heading'),
+                            'section_similarity': result['similarity']
+                        }
+                    else:
+                        # 新的章节级别关联
+                        candidate_files[file_id_key] = {
+                            'file_id': result['file_id'],
+                            'title': result['title'],
+                            'file_path': result['file_path'],
+                            'link_level': 'section',
+                            'similarity': result['similarity'],
+                            'match_type': 'outline',
+                            'match_content': result['chunk_text'],
+                            'section_info': {
+                                'section_path': result.get('section_path'),
+                                'parent_heading': result.get('parent_heading'),
+                                'section_similarity': result['similarity']
+                            }
+                        }
+            
+            if not candidate_files:
+                logger.info("未找到候选关联文件")
+                return []
+            
+            # Step 5: 构建文件信息用于LLM分析
+            files_info = []
+            for file_info in candidate_files.values():
+                if file_info['link_level'] == 'file':
+                    files_info.append(f"文件ID: {file_info['file_id']}, 标题: {file_info['title']}, 路径: {file_info['file_path']}, 关联级别: 文件级(整体相关), 相似度: {file_info['similarity']:.2f}")
+                elif file_info['link_level'] == 'section':
+                    section_path = file_info.get('section_info', {}).get('section_path', '未知章节')
+                    files_info.append(f"文件ID: {file_info['file_id']}, 标题: {file_info['title']}, 路径: {file_info['file_path']}, 关联级别: 章节级({section_path}), 相似度: {file_info['similarity']:.2f}")
+            
+            files_text = "\n".join(files_info)
+            
+            # Step 6: 使用LLM生成智能链接
+            smart_links = self._generate_enhanced_links_with_llm(file_id, content, title, files_text, list(candidate_files.values()))
+            
+            logger.info(f"多层次链接发现完成: 找到 {len(smart_links)} 个智能链接")
+            return smart_links
+            
+        except Exception as e:
+            logger.error(f"多层次智能链接发现失败: {e}")
+            # 降级到传统方法
+            return self._traditional_smart_links(file_id, content, title)
+    
+    def _generate_file_summary_for_linking(self, content: str, title: str) -> str:
+        """为链接发现生成文件摘要"""
+        # 生成简洁的文件摘要用于文件级别的关联判断
+        summary_parts = [f"标题: {title}"]
+        
+        # 提取前几段重要内容
+        lines = content.split('\n')
+        important_lines = []
+        char_count = 0
+        max_chars = 800
+        
+        for line in lines:
+            line = line.strip()
+            if line and char_count < max_chars:
+                important_lines.append(line)
+                char_count += len(line)
+            if char_count >= max_chars:
+                break
+        
+        summary_parts.extend(important_lines)
+        return '\n'.join(summary_parts)
+    
+    def _generate_links_with_llm(self, file_id: int, content: str, title: str, files_text: str, related_results: List[Dict]) -> List[Dict[str, Any]]:
+        """使用LLM生成传统智能链接"""
+        try:
             prompt = f"""当前文档：
 标题：{title}
 内容：{content[:500]}
@@ -708,14 +1216,70 @@ class AIService:
             import json
             try:
                 smart_links = json.loads(result_text)
-                logger.info(f"智能链接发现成功: {len(smart_links)} 个链接")
+                logger.info(f"智能链接生成成功: {len(smart_links)} 个链接")
                 return smart_links
             except json.JSONDecodeError as e:
                 logger.error(f"解析智能链接JSON失败: {e}")
                 return []
-            
+                
         except Exception as e:
-            logger.error(f"智能链接发现失败: {e}")
+            logger.error(f"LLM生成链接失败: {e}")
+            return []
+    
+    def _generate_enhanced_links_with_llm(self, file_id: int, content: str, title: str, files_text: str, candidate_files: List[Dict]) -> List[Dict[str, Any]]:
+        """使用LLM生成增强的多层次智能链接"""
+        try:
+            prompt = f"""当前文档：
+标题：{title}
+内容：{content[:600]}
+
+候选关联文档（包含关联级别和相似度）：
+{files_text}
+
+请基于多层次关联分析，为每个候选文档评估是否应该建立链接，以及链接的类型和强度。
+
+关联级别说明：
+- 文件级：整个文档在主题或内容上相关
+- 章节级：特定章节或主题相关
+
+请为每个建议的链接提供：
+1. 链接类型（reference/related/follow_up/prerequisite/example/contradiction/complement）
+2. 链接强度（strong/medium/weak）
+3. 链接理由（详细说明关联原因和关联级别）
+4. 建议的链接文本
+5. 是否推荐建立链接（true/false）
+
+请以JSON格式返回，格式如下：
+[
+    {{
+        "target_file_id": 文件ID,
+        "link_type": "链接类型",
+        "link_strength": "链接强度",
+        "reason": "链接理由",
+        "suggested_text": "建议的链接文本",
+        "recommended": true或false
+    }}
+]
+
+只返回JSON，不要其他文字："""
+            
+            response = self.llm.invoke(prompt)
+            result_text = response.content.strip()
+            
+            # 尝试解析JSON
+            import json
+            try:
+                smart_links = json.loads(result_text)
+                # 只返回推荐的链接
+                recommended_links = [link for link in smart_links if link.get('recommended', False)]
+                logger.info(f"增强智能链接生成成功: {len(recommended_links)} 个推荐链接（从 {len(smart_links)} 个候选中筛选）")
+                return recommended_links
+            except json.JSONDecodeError as e:
+                logger.error(f"解析增强智能链接JSON失败: {e}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"LLM生成增强链接失败: {e}")
             return []
 
     def _get_cached_query_embedding(self, query: str) -> List[float]:
@@ -742,7 +1306,7 @@ class AIService:
             return embedding
 
     def chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True) -> Dict[str, Any]:
-        """基于上下文的智能问答 - RAG实现，支持MCP工具调用"""
+        """基于上下文的智能问答 - RAG实现，支持MCP工具调用和多层次检索"""
         if not self.is_available():
             logger.warning("AI服务不可用，无法进行智能问答")
             return {
@@ -756,12 +1320,15 @@ class AIService:
             start_time = time.time()
             logger.info(f"开始RAG问答，问题: {question}, 工具调用: {enable_tools}")
             
-            # 1. 语义搜索相关文档
-            search_results = self.semantic_search(
-                query=question,
-                limit=search_limit,
-                similarity_threshold=settings.semantic_search_threshold
-            )
+            # 1. 智能上下文检索（支持多层次）
+            if settings.enable_hierarchical_chunking:
+                search_results = self._hierarchical_context_search(question, search_limit)
+            else:
+                search_results = self.semantic_search(
+                    query=question,
+                    limit=search_limit,
+                    similarity_threshold=settings.semantic_search_threshold
+                )
             
             logger.info(f"搜索到 {len(search_results)} 个相关文档")
             
@@ -775,9 +1342,16 @@ class AIService:
                 file_path = result.get('file_path', '')
                 title = result.get('title', '')
                 similarity = result.get('similarity', 0)
+                chunk_type = result.get('chunk_type', 'content')
+                section_path = result.get('section_path', '')
                 
-                # 准备上下文片段
-                context_part = f"文档：{title}\n路径：{file_path}\n内容：{chunk_text}\n"
+                # 根据分块类型调整上下文格式
+                if chunk_type == 'summary':
+                    context_part = f"【文档摘要】{title}\n路径：{file_path}\n摘要：{chunk_text}\n"
+                elif chunk_type == 'outline':
+                    context_part = f"【章节大纲】{title} - {section_path}\n路径：{file_path}\n大纲：{chunk_text}\n"
+                else:
+                    context_part = f"【内容片段】{title}\n路径：{file_path}\n内容：{chunk_text}\n"
                 
                 # 检查长度限制
                 if current_length + len(context_part) > max_context_length:
@@ -793,7 +1367,9 @@ class AIService:
                     'file_path': file_path,
                     'title': title,
                     'similarity': similarity,
-                    'chunk_text': chunk_text[:200] + '...' if len(chunk_text) > 200 else chunk_text
+                    'chunk_text': chunk_text[:200] + '...' if len(chunk_text) > 200 else chunk_text,
+                    'chunk_type': chunk_type,
+                    'section_path': section_path
                 })
             
             context = "\n\n".join(context_parts)
@@ -1163,3 +1739,86 @@ class AIService:
                 "related_documents": [],
                 "search_query": question
             }
+
+    def _hierarchical_context_search(self, question: str, search_limit: int) -> List[Dict[str, Any]]:
+        """多层次上下文搜索 - 为RAG问答优化"""
+        try:
+            logger.info(f"开始多层次上下文搜索: {question}")
+            
+            # 分析问题类型，决定搜索策略
+            question_type = self._analyze_question_type(question)
+            
+            context_results = []
+            
+            if question_type == 'overview':
+                # 概览性问题：优先搜索摘要层
+                summary_results = self._search_by_chunk_type(question, "summary", search_limit//2, 0.8)
+                outline_results = self._search_by_chunk_type(question, "outline", search_limit//2, 0.7)
+                content_results = self._search_by_chunk_type(question, "content", search_limit//3, 0.7)
+                
+                # 智能上下文扩展：为摘要匹配的文件获取关键章节
+                for summary_result in summary_results:
+                    context_results.append(summary_result)
+                    # 获取该文件的重要章节
+                    file_outlines = self._get_file_outline(summary_result['file_id'])
+                    context_results.extend(file_outlines[:2])  # 添加前2个章节
+                
+                context_results.extend(outline_results)
+                context_results.extend(content_results)
+                
+            elif question_type == 'specific':
+                # 具体问题：优先搜索内容层，补充相关大纲
+                content_results = self._search_by_chunk_type(question, "content", search_limit, 0.7)
+                outline_results = self._search_by_chunk_type(question, "outline", search_limit//2, 0.7)
+                
+                # 为内容匹配结果添加上下文
+                for content_result in content_results:
+                    context_results.append(content_result)
+                    
+                    # 如果有章节信息，尝试获取相邻内容
+                    if content_result.get('parent_heading'):
+                        sibling_content = self._get_section_content(
+                            content_result['file_id'], 
+                            content_result['parent_heading']
+                        )
+                        context_results.extend(sibling_content[:1])  # 添加1个相邻内容块
+                
+                context_results.extend(outline_results)
+                
+            else:
+                # 默认策略：平衡搜索各个层次
+                summary_results = self._search_by_chunk_type(question, "summary", search_limit//4, 0.8)
+                outline_results = self._search_by_chunk_type(question, "outline", search_limit//3, 0.7)
+                content_results = self._search_by_chunk_type(question, "content", search_limit, 0.7)
+                
+                context_results.extend(summary_results)
+                context_results.extend(outline_results)
+                context_results.extend(content_results)
+            
+            # 去重并排序
+            final_results = self._deduplicate_and_rank(context_results, search_limit * 2)
+            
+            logger.info(f"多层次上下文搜索完成: 返回 {len(final_results)} 个结果")
+            return final_results[:search_limit]
+            
+        except Exception as e:
+            logger.error(f"多层次上下文搜索失败: {e}")
+            # 降级到传统搜索
+            return self.semantic_search(question, search_limit, settings.semantic_search_threshold)
+    
+    def _analyze_question_type(self, question: str) -> str:
+        """分析问题类型"""
+        question_lower = question.lower()
+        
+        # 概览性问题关键词
+        overview_keywords = ['什么是', '介绍', '概述', '总结', '整体', '全部', '所有', '概况', '总体']
+        
+        # 具体问题关键词
+        specific_keywords = ['如何', '怎么', '为什么', '哪里', '何时', '具体', '详细', '步骤', '方法']
+        
+        if any(keyword in question_lower for keyword in overview_keywords):
+            return 'overview'
+        elif any(keyword in question_lower for keyword in specific_keywords):
+            return 'specific'
+        else:
+            return 'balanced'

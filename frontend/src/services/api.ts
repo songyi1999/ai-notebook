@@ -220,6 +220,13 @@ export interface SystemStatus {
     last_updated: string;
 }
 
+export interface ProcessorStatus {
+    running: boolean;
+    pid?: number;
+    status: string;
+    message: string;
+}
+
 // 文件上传转换相关接口
 export interface FileUploadResult {
     success: boolean;
@@ -553,6 +560,27 @@ export class ApiClient {
         return response.data;
     }
 
+    // 获取任务处理器状态
+    async getProcessorStatus(): Promise<ProcessorStatus> {
+        const response = await this.request<{ success: boolean; data: ProcessorStatus }>('/index/processor/status');
+        return response.data;
+    }
+
+    // 启动任务处理器
+    async startProcessor(force: boolean = false): Promise<{ success: boolean; message: string; data: ProcessorStatus }> {
+        return this.request<{ success: boolean; message: string; data: ProcessorStatus }>('/index/processor/start', {
+            method: 'POST',
+            body: JSON.stringify({ force })
+        });
+    }
+
+    // 停止任务处理器
+    async stopProcessor(): Promise<{ success: boolean; message: string; data: ProcessorStatus }> {
+        return this.request<{ success: boolean; message: string; data: ProcessorStatus }>('/index/processor/stop', {
+            method: 'POST'
+        });
+    }
+
     // 文件上传转换API
     async uploadAndConvertFiles(files: File[], targetFolder?: string): Promise<FileUploadResponse> {
         const formData = new FormData();
@@ -724,4 +752,9 @@ export const mcpApi = {
     async getStats(): Promise<MCPStats> {
         return apiClient.request<MCPStats>('/mcp/stats');
     }
-}; 
+};
+
+// 任务处理器相关导出
+export const getProcessorStatus = (...args: Parameters<ApiClient['getProcessorStatus']>) => apiClient.getProcessorStatus(...args);
+export const startProcessor = (...args: Parameters<ApiClient['startProcessor']>) => apiClient.startProcessor(...args);
+export const stopProcessor = (...args: Parameters<ApiClient['stopProcessor']>) => apiClient.stopProcessor(...args); 

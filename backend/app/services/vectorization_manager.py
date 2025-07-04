@@ -122,8 +122,8 @@ class VectorizationManager:
             return None
     
     def _add_vectorization_task(self, file_id: int, file_path: str, priority: int = 1) -> bool:
-        """添加向量化任务（带去重）"""
-        return self.task_processor.add_task(file_id, file_path, "vector_index", priority)
+        """添加向量化任务（使用统一原子操作）"""
+        return self.task_processor.add_task(file_id, file_path, "file_import", priority)
     
     def _execute_vectorization(self, file: File) -> bool:
         """执行向量化"""
@@ -156,14 +156,23 @@ class VectorizationManager:
             if _pending_tasks_cache["data"] and datetime.now() - _pending_tasks_cache["last_update"] < timedelta(seconds=_pending_tasks_cache["cache_duration"]):
                 return _pending_tasks_cache["data"]
             
+            # 统计新的文件导入任务和旧的向量索引任务
+            file_import_count = self.db.query(PendingTask).filter(
+                PendingTask.task_type == "file_import",
+                PendingTask.status == "pending"
+            ).count()
+            
             vector_count = self.db.query(PendingTask).filter(
                 PendingTask.task_type == "vector_index",
                 PendingTask.status == "pending"
             ).count()
             
+            total_count = file_import_count + vector_count
+            
             result = {
-                "vector_index": vector_count,
-                "total": vector_count
+                "file_import": file_import_count,
+                "vector_index": vector_count,  # 保持向后兼容
+                "total": total_count
             }
             
             # 更新缓存
@@ -174,7 +183,7 @@ class VectorizationManager:
             
         except Exception as e:
             logger.error(f"获取任务统计失败: {e}")
-            return {"vector_index": 0, "total": 0}
+            return {"file_import": 0, "vector_index": 0, "total": 0}
     
     def clear_duplicate_tasks(self) -> int:
         """清理重复的待处理任务"""

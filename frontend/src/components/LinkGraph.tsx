@@ -443,40 +443,42 @@ const LinkGraph: React.FC<LinkGraphProps> = ({
   return (
     <div style={{ padding: '16px' }}>
       {/* 统计信息 */}
-      <Row gutter={16} style={{ marginBottom: '16px' }}>
+      <Row gutter={8} style={{ marginBottom: '12px' }}>
         <Col span={6}>
-          <Card>
+          <Card size="small">
             <Statistic
               title="总节点数"
               value={stats.totalNodes}
               prefix={<FileTextOutlined />}
+              valueStyle={{ fontSize: '20px' }}
             />
           </Card>
         </Col>
         <Col span={6}>
-          <Card>
+          <Card size="small">
             <Statistic
               title="连接数"
               value={stats.totalEdges}
               prefix={<LinkOutlined />}
+              valueStyle={{ fontSize: '20px' }}
             />
           </Card>
         </Col>
         <Col span={6}>
-          <Card>
+          <Card size="small">
             <Statistic
               title="已连接节点"
               value={stats.connectedNodes}
-              valueStyle={{ color: '#52c41a' }}
+              valueStyle={{ color: '#52c41a', fontSize: '20px' }}
             />
           </Card>
         </Col>
         <Col span={6}>
-          <Card>
+          <Card size="small">
             <Statistic
               title="孤立节点"
               value={stats.orphanNodes}
-              valueStyle={{ color: '#faad14' }}
+              valueStyle={{ color: '#faad14', fontSize: '20px' }}
             />
           </Card>
         </Col>
@@ -532,9 +534,9 @@ const LinkGraph: React.FC<LinkGraphProps> = ({
             )}
           </Space>
         }
-        style={{ marginBottom: '16px' }}
+        style={{ marginBottom: '12px' }}
       >
-        <Row gutter={16} style={{ marginBottom: '16px' }}>
+        <Row gutter={16} style={{ marginBottom: '12px' }}>
           <Col span={8}>
             <Search
               placeholder="搜索文件名或路径"
@@ -587,7 +589,7 @@ const LinkGraph: React.FC<LinkGraphProps> = ({
           </Col>
         </Row>
 
-        <Row gutter={16} style={{ marginBottom: '16px' }}>
+        <Row gutter={16} style={{ marginBottom: '8px' }}>
           <Col span={12}>
             <Text>节点大小: </Text>
             <Slider
@@ -617,7 +619,8 @@ const LinkGraph: React.FC<LinkGraphProps> = ({
           ref={networkRef}
           style={{
             width: '100%',
-            height: '600px',
+            height: '500px',
+            minHeight: '400px',
             border: '1px solid #d9d9d9',
             borderRadius: '6px',
             backgroundColor: '#fafafa'

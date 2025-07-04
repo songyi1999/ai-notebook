@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button, Input, Space, message, Tabs, Typography, Spin, Divider, Modal } from 'antd';
-import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined, ToolOutlined, LinkOutlined } from '@ant-design/icons';
+import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined, ToolOutlined, LinkOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
-import { apiClient, SystemStatus, search } from '../services/api';
+import { apiClient, SystemStatus, ProcessorStatus, search, getProcessorStatus, startProcessor, stopProcessor } from '../services/api';
 import TagManager from './TagManager';
 import AutoProcessor from './AutoProcessor';
 import LinkGraph from './LinkGraph';
@@ -153,6 +153,7 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   const [activeTab, setActiveTab] = useState('edit');
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [processorStatus, setProcessorStatus] = useState<ProcessorStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [tagRefreshTrigger, setTagRefreshTrigger] = useState(0);
   
@@ -569,8 +570,20 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   const loadSystemStatus = useCallback(async () => {
     try {
       setStatusLoading(true);
-      const status = await apiClient.getSystemStatus();
-      setSystemStatus(status);
+      
+      // 并行获取系统状态和任务处理器状态
+      const [systemStatusResult, processorStatusResult] = await Promise.allSettled([
+        apiClient.getSystemStatus(),
+        getProcessorStatus()
+      ]);
+      
+      if (systemStatusResult.status === 'fulfilled') {
+        setSystemStatus(systemStatusResult.value);
+      }
+      
+      if (processorStatusResult.status === 'fulfilled') {
+        setProcessorStatus(processorStatusResult.value);
+      }
     } catch (error) {
       console.error('获取系统状态失败:', error);
       // 静默失败，不显示错误消息
@@ -584,6 +597,50 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     // 这里可以处理标签变化的逻辑
     console.log('标签已更新:', tags);
   }, []);
+
+  // 启动任务处理器
+  const handleStartProcessor = useCallback(async (force: boolean = false) => {
+    try {
+      setStatusLoading(true);
+      const result = await startProcessor(force);
+      
+      if (result.success) {
+        message.success(result.message);
+        setProcessorStatus(result.data);
+      } else {
+        message.warning(result.message);
+      }
+    } catch (error) {
+      console.error('启动任务处理器失败:', error);
+      message.error(`启动任务处理器失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setStatusLoading(false);
+      // 刷新状态
+      loadSystemStatus();
+    }
+  }, [loadSystemStatus]);
+
+  // 停止任务处理器
+  const handleStopProcessor = useCallback(async () => {
+    try {
+      setStatusLoading(true);
+      const result = await stopProcessor();
+      
+      if (result.success) {
+        message.success(result.message);
+        setProcessorStatus(result.data);
+      } else {
+        message.warning(result.message);
+      }
+    } catch (error) {
+      console.error('停止任务处理器失败:', error);
+      message.error(`停止任务处理器失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setStatusLoading(false);
+      // 刷新状态
+      loadSystemStatus();
+    }
+  }, [loadSystemStatus]);
 
   // 定期更新系统状态
   useEffect(() => {
@@ -774,17 +831,22 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                 </span>
               ),
               children: (
-                <LinkGraph
-                  currentFileId={currentNote.id}
-                  onNodeClick={(_, filePath) => {
-                    // 处理节点点击事件，跳转到对应文件
-                    if (onFileChange) {
-                      const fileName = filePath.split('/').pop() || '';
-                      onFileChange(filePath, fileName);
-                    }
-                    message.success(`已跳转到文件: ${filePath}`);
-                  }}
-                />
+                <div style={{ 
+                  height: '100%',
+                  overflow: 'auto'
+                }}>
+                  <LinkGraph
+                    currentFileId={currentNote.id}
+                    onNodeClick={(_, filePath) => {
+                      // 处理节点点击事件，跳转到对应文件
+                      if (onFileChange) {
+                        const fileName = filePath.split('/').pop() || '';
+                        onFileChange(filePath, fileName);
+                      }
+                      message.success(`已跳转到文件: ${filePath}`);
+                    }}
+                  />
+                </div>
               )
             },
             {
@@ -888,6 +950,62 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                 <ClockCircleOutlined />
                 待索引: {systemStatus.pending_tasks}
               </span>
+              {/* 任务处理器状态 */}
+              {processorStatus && (
+                <span style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '4px',
+                  color: processorStatus.running ? '#52c41a' : '#ff4d4f'
+                }}>
+                  <span style={{ fontSize: '10px' }}>
+                    {processorStatus.running ? '●' : '○'}
+                  </span>
+                  处理器: {processorStatus.running ? '运行中' : '已停止'}
+                </span>
+              )}
+              {/* 控制按钮 */}
+              {processorStatus && (
+                <Space size="small">
+                  {!processorStatus.running && (
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<SyncOutlined />}
+                      onClick={() => handleStartProcessor(false)}
+                      style={{ padding: '0 4px', fontSize: '11px', height: '20px' }}
+                      title="启动任务处理器"
+                    >
+                      启动
+                    </Button>
+                  )}
+                  {processorStatus.running && (
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      icon={<CloseCircleOutlined />}
+                      onClick={handleStopProcessor}
+                      style={{ padding: '0 4px', fontSize: '11px', height: '20px' }}
+                      title="停止任务处理器"
+                    >
+                      停止
+                    </Button>
+                  )}
+                  {systemStatus.pending_tasks > 0 && !processorStatus.running && (
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<DatabaseOutlined />}
+                      onClick={() => handleStartProcessor(true)}
+                      style={{ padding: '0 8px', fontSize: '11px', height: '20px' }}
+                      title="强制启动索引处理"
+                    >
+                      开始索引
+                    </Button>
+                  )}
+                </Space>
+              )}
             </Space>
           ) : (
             <Text type="secondary" style={{ fontSize: '12px' }}>系统状态加载中...</Text>

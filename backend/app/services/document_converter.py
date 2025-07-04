@@ -166,19 +166,16 @@ class DocumentConverter:
             if text_content is None:
                 raise Exception("无法检测文件编码，请确保文件为文本格式")
             
-            # 基本的格式化处理
+            # 基本的格式化处理，保留原始文本结构
             lines = text_content.split('\n')
             markdown_lines = []
             
             for line in lines:
                 line = line.strip()
                 if line:
-                    # 简单的标题检测（如果行很短且后面有空行，可能是标题）
-                    if len(line) < 50 and not line.endswith(('。', '.', '！', '!', '？', '?')):
-                        # 检查是否可能是标题
-                        markdown_lines.append(f"## {line}")
-                    else:
-                        markdown_lines.append(line)
+                    # 不做自动标题识别，保持原始文本格式
+                    # 用户可以手动添加Markdown标记
+                    markdown_lines.append(line)
                 else:
                     markdown_lines.append("")
             
@@ -229,22 +226,16 @@ class DocumentConverter:
             # 提取文本内容
             full_text = "\n\n".join([doc.page_content for doc in docs])
             
-            # 基本的 Markdown 格式化
+            # 基本的 Markdown 格式化，保留原始文本结构
             lines = full_text.split('\n')
             markdown_lines = []
             
             for line in lines:
                 line = line.strip()
                 if line:
-                    # 简单的格式化处理
-                    if len(line) < 80 and not line.endswith(('。', '.', '！', '!', '？', '?', ':', '：')):
-                        # 可能是标题
-                        if not any(char.isdigit() for char in line[:10]):  # 不是以数字开头的可能是标题
-                            markdown_lines.append(f"## {line}")
-                        else:
-                            markdown_lines.append(line)
-                    else:
-                        markdown_lines.append(line)
+                    # 不做自动标题识别，保持原始文本格式
+                    # 用户可以手动添加Markdown标记
+                    markdown_lines.append(line)
                 else:
                     markdown_lines.append("")
             

@@ -77,69 +77,61 @@ async def upload_and_convert_files(
             files_data, str(target_dir)
         )
         
-        # 为成功转换的文件创建数据库记录和索引任务
-        created_files = []
-        file_service = FileService(db)
+        # 为成功转换的文件创建文件导入任务（入库+向量化）
+        import_tasks = []
         task_processor = TaskProcessorService(db)
         
         for success_result in conversion_result['successful_conversions']:
             try:
-                # 读取转换后的文件内容
+                # 计算相对路径
                 file_path = Path(success_result['target_path'])
                 relative_path = str(file_path.relative_to(Path("./notes")))
                 
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # 创建文件记录
-                file_create = FileCreate(
+                # 添加文件导入任务到队列（避免并发写库冲突）
+                task_success = task_processor.add_task(
+                    file_id=0,  # 文件还未入库，暂时使用0
                     file_path=relative_path,
-                    title=Path(success_result['converted_filename']).stem,
-                    content=content
+                    task_type="file_import",  # 新的任务类型：文件导入
+                    priority=2  # 高优先级，优先处理新文件
                 )
                 
-                # 保存到数据库
-                db_file = file_service.create_file(file_create, fast_mode=True)
-                if db_file:
-                    created_files.append({
-                        'file_id': db_file.id,
+                if task_success:
+                    import_tasks.append({
                         'file_path': relative_path,
                         'original_filename': success_result['original_filename'],
                         'converted_filename': success_result['converted_filename']
                     })
-                    
-                    # 添加后台索引任务
-                    background_tasks.add_task(
-                        task_processor.create_pending_task,
-                        db_file.id,
-                        "vector_index",
-                        1  # 高优先级
-                    )
-                    
-                    logger.info(f"文件已保存到数据库: {relative_path}")
+                    logger.info(f"文件导入任务已加入队列: {relative_path}")
+                else:
+                    logger.error(f"文件导入任务添加失败: {relative_path}")
                 
             except Exception as e:
-                logger.error(f"保存文件到数据库失败: {success_result['converted_filename']} - {str(e)}")
-                # 转换成功但保存失败，仍然算作转换成功
+                logger.error(f"添加文件导入任务失败: {success_result['converted_filename']} - {str(e)}")
                 continue
+        
+        # 启动后台任务处理器
+        if import_tasks:
+            background_tasks.add_task(
+                task_processor.process_all_pending_tasks
+            )
         
         # 构造响应
         response_data = {
             'success': True,
-            'message': '文件批量转换完成',
+            'message': '文件批量转换完成，导入任务已加入队列',
             'summary': {
                 'total_files': conversion_result['total_files'],
                 'processed_count': conversion_result['processed_count'],
                 'successful_count': conversion_result['successful_count'],
                 'failed_count': conversion_result['failed_count'],
                 'ignored_count': conversion_result['ignored_count'],
-                'created_db_records': len(created_files)
+                'queued_import_tasks': len(import_tasks)
             },
             'details': {
                 'successful_conversions': conversion_result['successful_conversions'],
                 'failed_conversions': conversion_result['failed_conversions'],
                 'ignored_files': conversion_result['ignored_files'],
-                'created_files': created_files
+                'import_tasks': import_tasks
             },
             'target_folder': str(target_dir.relative_to(notes_base_dir)) if target_folder else ""
         }
@@ -164,7 +156,7 @@ async def upload_and_convert_files(
                     'successful_count': 0,
                     'failed_count': 0,
                     'ignored_count': 0,
-                    'created_db_records': 0
+                    'queued_import_tasks': 0
                 }
             }
         )

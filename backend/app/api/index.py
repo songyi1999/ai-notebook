@@ -163,4 +163,77 @@ def get_system_status(db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取系统状态失败: {str(e)}"
+        )
+
+@router.get("/processor/status", response_model=Dict[str, Any])
+def get_processor_status(db: Session = Depends(get_db)):
+    """获取任务处理器运行状态"""
+    try:
+        task_processor = TaskProcessorService(db)
+        processor_status = task_processor.get_processor_status()
+        
+        return {
+            "success": True,
+            "data": processor_status
+        }
+    except Exception as e:
+        logger.error(f"获取任务处理器状态失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取任务处理器状态失败: {str(e)}"
+        )
+
+@router.post("/processor/start", response_model=Dict[str, Any])
+def start_processor(
+    force: bool = False,
+    db: Session = Depends(get_db)
+):
+    """手动启动任务处理器"""
+    try:
+        task_processor = TaskProcessorService(db)
+        result = task_processor.start_processor(force=force)
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "message": result["message"],
+                "data": result["status"]
+            }
+        else:
+            return {
+                "success": False,
+                "message": result["message"],
+                "data": result["status"]
+            }
+    except Exception as e:
+        logger.error(f"启动任务处理器失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"启动任务处理器失败: {str(e)}"
+        )
+
+@router.post("/processor/stop", response_model=Dict[str, Any])
+def stop_processor(db: Session = Depends(get_db)):
+    """停止任务处理器"""
+    try:
+        task_processor = TaskProcessorService(db)
+        result = task_processor.stop_processor()
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "message": result["message"],
+                "data": result["status"]
+            }
+        else:
+            return {
+                "success": False,
+                "message": result["message"],
+                "data": result["status"]
+            }
+    except Exception as e:
+        logger.error(f"停止任务处理器失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"停止任务处理器失败: {str(e)}"
         ) 

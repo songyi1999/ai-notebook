@@ -290,7 +290,7 @@ class IndexService:
 
     
     def rebuild_vector_index(self, progress_callback=None) -> Dict[str, Any]:
-        """重建ChromaDB向量索引"""
+        """重建ChromaDB向量索引（使用统一原子操作）"""
         try:
             logger.info("开始重建ChromaDB向量索引...")
             
@@ -304,41 +304,45 @@ class IndexService:
             if progress_callback:
                 progress_callback(20, "清空ChromaDB向量数据库")
             
-            # 处理每个文件
-            processed_count = 0
-            failed_count = 0
+            # 使用统一的文件处理原子操作
+            from .task_processor_service import TaskProcessorService
+            task_processor = TaskProcessorService(self.db)
+            
+            # 为每个文件添加处理任务
+            queued_count = 0
             for i, file in enumerate(files):
                 try:
-                    # 生成向量并保存到ChromaDB
-                    success = self.ai_service.add_document_to_vector_db(
-                        file.id,
-                        file.title,
-                        file.content,
-                        {"file_path": file.file_path, "parent_folder": file.parent_folder}
+                    success = task_processor.add_task(
+                        file_id=file.id,
+                        file_path=file.file_path,
+                        task_type="file_import",  # 使用统一的原子操作
+                        priority=3  # 重建索引优先级最高
                     )
                     
                     if success:
-                        processed_count += 1
-                    else:
-                        failed_count += 1
+                        queued_count += 1
                     
-                    if progress_callback and (i + 1) % 5 == 0:
-                        progress = 20 + (i + 1) / len(files) * 70
-                        progress_callback(progress, f"处理文件 {i + 1}/{len(files)} (成功: {processed_count}, 失败: {failed_count})")
+                    if progress_callback and (i + 1) % 10 == 0:
+                        progress = 20 + (i + 1) / len(files) * 60
+                        progress_callback(progress, f"添加任务 {i + 1}/{len(files)} (已排队: {queued_count})")
                         
                 except Exception as e:
-                    logger.error(f"处理文件向量失败: {file.file_path}, 错误: {e}")
-                    failed_count += 1
+                    logger.error(f"添加重建任务失败: {file.file_path}, 错误: {e}")
                     continue
             
             if progress_callback:
-                progress_callback(100, f"ChromaDB向量索引重建完成 (成功: {processed_count}, 失败: {failed_count})")
+                progress_callback(90, f"所有任务已排队，启动后台处理...")
             
-            logger.info(f"ChromaDB向量索引重建完成，成功处理 {processed_count} 个文件，失败 {failed_count} 个")
+            # 启动后台任务处理器
+            task_processor.process_all_pending_tasks()
+            
+            if progress_callback:
+                progress_callback(100, f"ChromaDB向量索引重建任务已启动 (已排队: {queued_count})")
+            
+            logger.info(f"ChromaDB向量索引重建任务已启动，共排队 {queued_count} 个文件")
             return {
                 "success": True,
-                "processed_files": processed_count,
-                "failed_files": failed_count,
+                "queued_files": queued_count,
                 "total_files": len(files)
             }
             

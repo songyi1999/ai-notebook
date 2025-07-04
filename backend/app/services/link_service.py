@@ -5,9 +5,9 @@ from ..models.link import Link
 from ..models.file import File
 from ..schemas.link import LinkCreate, LinkUpdate
 
-class LinkService:
-    def __init__(self, db: Session):
-        self.db = db
+from ..services.base_service import BaseService
+
+class LinkService(BaseService):
 
     def create_link(self, link: LinkCreate) -> Link:
         # 如果没有提供link_text，自动生成一个

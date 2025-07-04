@@ -43,6 +43,7 @@
 - ✅ 优化了链接数据模型，支持可选的link_text和anchor_text字段
 - ✅ 实现了智能默认值生成：自动使用目标文件名作为链接文本
 - ✅ 完善了组件集成检查，确保所有功能组件都正确集成到主界面
+- ✅ **代码重构**：清理了ai_service_langchain.py中的重复代码实现，从2243行优化到1825行，提升代码可维护性
 
 ### 🔍 智能搜索
 - **关键词搜索**：基于SQLite FTS5全文搜索
@@ -67,6 +68,14 @@
 - **节点交互**：点击节点跳转到对应文件
 - **布局算法**：智能布局算法优化图谱展示
 - **过滤功能**：按类型、时间等条件过滤显示
+
+### 📈 系统监控与控制（v1.3.3新增）
+- **状态监控**：实时显示系统状态（文件数、嵌入数、待索引任务数）
+- **处理器状态**：显示任务处理器运行状态，支持PID检测
+- **手动控制**：支持手动启动/停止任务处理器
+- **智能提醒**：当有待索引任务且处理器停止时，显示醒目的"开始索引"按钮
+- **状态指示器**：绿色●表示运行中，红色○表示已停止
+- **自动刷新**：每60秒自动刷新系统状态
 
 ### 🛠️ MCP工具集成
 - **协议支持**：完整的Model Context Protocol支持
@@ -258,6 +267,9 @@ EMBEDDING_MODEL=nomic-embed-text
 | `get_rebuild_progress` | `None` | `dict` | 重建进度 | ⚠️ 未使用 |
 | `scan_notes_directory` | `None` | `dict` | 扫描文件 | ⚠️ 未使用 |
 | `get_system_status` | `None` | `dict` | 系统状态 | ✅ 使用中 |
+| `get_processor_status` | `None` | `dict` | 获取任务处理器状态（v1.3.3新增）| ✅ 使用中 |
+| `start_processor` | `force: bool` | `dict` | 启动任务处理器（v1.3.3新增）| ✅ 使用中 |
+| `stop_processor` | `None` | `dict` | 停止任务处理器（v1.3.3新增）| ✅ 使用中 |
 
 
 
@@ -333,7 +345,7 @@ EMBEDDING_MODEL=nomic-embed-text
 | 函数名称 | 输入参数 | 输出 | 说明 | 使用情况 |
 |---------|---------|------|------|----------|
 | `is_available` | `None` | `bool` | 检查AI服务是否可用 | ✅ 使用中 |
-| `create_embeddings` | `file: File` | `bool` | 创建文件嵌入 | ✅ 使用中 |
+| `create_embeddings` | `file: File, progress_callback=None` | `bool` | 创建文件嵌入（v1.3.2支持进度回调）| ✅ 使用中 |
 | `semantic_search` | `query: str, limit: int, similarity_threshold: float` | `List[dict]` | 语义搜索 | ✅ 使用中 |
 | `suggest_tags` | `title: str, content: str, max_tags: int` | `List[str]` | AI标签建议 | ✅ 使用中 |
 | `discover_smart_links` | `file_id: int, content: str, title: str` | `List[dict]` | AI链接发现 | ✅ 使用中 |
@@ -374,15 +386,36 @@ EMBEDDING_MODEL=nomic-embed-text
 | `rebuild_vector_index` | `progress_callback: callable` | `dict` | 重建向量索引 | ✅ 使用中 |
 | `rebuild_all_indexes` | `progress_callback: callable` | `dict` | 重建所有索引 | ✅ 使用中 |
 
+#### 智能分块服务 (IntelligentHierarchicalSplitter) - v1.3.2新增
+| 函数名称 | 输入参数 | 输出 | 说明 | 使用情况 |
+|---------|---------|------|------|----------|
+| `split_document` | `content: str, title: str, file_id: int, progress_callback=None` | `Dict[str, List[Document]]` | 智能多层次文档分块（v1.3.2支持进度回调）| ✅ 使用中 |
+| `_create_summary_direct` | `content: str, title: str, file_id: int, progress_callback=None` | `List[Document]` | 直接生成摘要（v1.3.2支持进度回调）| ✅ 使用中 |
+| `_create_summary_with_divide_conquer` | `content: str, title: str, file_id: int, progress_callback=None` | `List[Document]` | 分而治之生成摘要（v1.3.2支持进度回调）| ✅ 使用中 |
+| `_create_outline_direct` | `content: str, title: str, file_id: int, progress_callback=None` | `List[Document]` | 直接提取大纲（v1.3.2支持进度回调）| ✅ 使用中 |
+| `_create_outline_with_divide_conquer` | `content: str, title: str, file_id: int, progress_callback=None` | `List[Document]` | 分而治之提取大纲（v1.3.2支持进度回调）| ✅ 使用中 |
+| `_create_intelligent_content_layer` | `content: str, title: str, file_id: int, outline_docs: List[Document], progress_callback=None` | `List[Document]` | 智能内容分块（v1.3.2支持进度回调）| ✅ 使用中 |
+| `_fallback_to_simple_chunking` | `content: str, title: str, file_id: int` | `Dict[str, List[Document]]` | 降级到简单分块 | ✅ 使用中 |
+
 #### 任务处理服务 (TaskProcessorService)
 | 函数名称 | 输入参数 | 输出 | 说明 | 使用情况 |
 |---------|---------|------|------|----------|
 | `create_pending_task` | `file_id: int, task_type: str, priority: int` | `bool` | 创建待处理任务 | ✅ 使用中 |
+| `add_task` | `file_id: int, file_path: str, task_type: str, priority: int` | `bool` | 添加任务到队列 | ✅ 使用中 |
 | `get_pending_tasks` | `limit: int` | `List[PendingTask]` | 获取待处理任务 | ✅ 使用中 |
 | `process_task` | `task: PendingTask` | `bool` | 处理任务 | ✅ 使用中 |
+| `_process_vector_index_task` | `file: File` | `bool` | 处理向量索引任务 | ✅ 使用中 |
+| `_process_file_import_task` | `task: PendingTask` | `bool` | 处理文件导入任务（入库+向量化原子操作）| ✅ 使用中 |
+| `_get_pending_tasks_count` | `None` | `int` | 获取待处理任务数量（v1.3.2新增）| ✅ 使用中 |
+| `_log_chunking_progress` | `file_path: str, step: str, message: str` | `None` | 记录分块进度（v1.3.2新增）| ✅ 使用中 |
+| `_is_process_running` | `pid: int` | `bool` | 检查进程是否运行（v1.3.2新增）| ✅ 使用中 |
 | `process_all_pending_tasks` | `None` | `None` | 处理所有待处理任务 | ✅ 使用中 |
 | `cleanup_old_tasks` | `days: int` | `None` | 清理旧任务 | ✅ 使用中 |
+| `clear_duplicate_pending_tasks` | `None` | `int` | 清理重复任务 | ✅ 使用中 |
 | `get_task_statistics` | `None` | `dict` | 获取任务统计 | ✅ 使用中 |
+| `get_processor_status` | `None` | `dict` | 获取任务处理器状态（v1.3.3新增）| ✅ 使用中 |
+| `start_processor` | `force: bool` | `dict` | 启动任务处理器（v1.3.3新增）| ✅ 使用中 |
+| `stop_processor` | `None` | `dict` | 停止任务处理器（v1.3.3新增）| ✅ 使用中 |
 
 ### 🎨 前端组件函数
 
@@ -525,13 +558,13 @@ EMBEDDING_MODEL=nomic-embed-text
 | 模块 | 总函数数 | 使用中 | 未使用 | 已删除 |
 |------|---------|--------|--------|----------|
 | 后端API | 72 | 48 | 24 | 5 |
-| 后端服务 | 94 | 81 | 13 | 0 |
+| 后端服务 | 104 | 91 | 13 | 0 |
 | 前端组件 | 52 | 52 | 0 | 0 |
 | 数据库操作 | 4 | 4 | 0 | 0 |
-| **总计** | **222** | **185** | **37** | **5** |
+| **总计** | **232** | **195** | **37** | **5** |
 
-**使用率**: 83.3% (185/222)
-**优化完成**: 已删除5个冗余函数，新增文件上传转换功能
+**使用率**: 84.1% (195/232)
+**v1.3.2更新**: 新增智能分块服务(7个方法) + 任务处理监控(3个方法)，优化进度回调机制
 
 ## 变量说明
 
@@ -581,6 +614,183 @@ npm test
 ```
 
 ## 更新日志
+
+### v1.3.3 (2025-01-05) - TXT转MD自动标题问题修复 🔧
+- ✅ **修复txt转md自动标题问题**：解决txt文件转换时自动添加多余##符号的问题
+- ✅ **移除过于宽泛的标题检测**：不再自动识别短行为标题，保持原始文本格式
+- ✅ **同时修复txt和docx转换**：两种格式都不再进行自动标题检测
+- ✅ **保持用户控制权**：用户可以手动添加Markdown标记，转换结果更可预测
+- ✅ **修复Docker构建问题**：移除引起哈希冲突的mypy依赖
+- ✅ **完整测试验证**：确保转换后的文件与原始文件内容完全一致
+
+#### 🔧 技术修复详情
+
+**问题分析**：
+原来的转换逻辑中存在过于宽泛的标题检测：
+```python
+# 原问题代码
+if len(line) < 50 and not line.endswith(('。', '.', '！', '!', '？', '?')):
+    markdown_lines.append(f"## {line}")  # 自动添加##符号
+```
+
+**修复方案**：
+```python
+# 修复后的代码
+# 不做自动标题识别，保持原始文本格式
+# 用户可以手动添加Markdown标记
+markdown_lines.append(line)
+```
+
+**影响范围**：
+- `_convert_txt_to_md()` - TXT文件转换逻辑
+- `_convert_docx_to_md()` - DOCX文件转换逻辑
+
+**修复效果**：
+- ✅ 转换后的文件与原始文件内容完全一致
+- ✅ 不再添加任何多余的##符号
+- ✅ 用户可以按需手动添加Markdown格式
+- ✅ 提高转换结果的可预测性和一致性
+
+### v1.3.2 (2025-01-05) - 任务处理器修复与日志增强 🛠️
+- ✅ **修复任务处理器锁定问题**：解决Docker重启后"任务处理器已运行但实际未运行"的假运行问题
+- ✅ **改进进程检测机制**：使用psutil检查进程真实状态，避免死锁文件导致的处理停滞
+- ✅ **详细智能分块日志**：在每个智能分块步骤（摘要生成、大纲提取、内容分块、向量存储）输出详细日志
+- ✅ **任务队列状态监控**：每完成一个任务都会显示剩余待处理任务数量，便于进度跟踪
+- ✅ **进度回调机制**：从任务处理器到AI服务再到智能分块器，全链路支持进度回调
+- ✅ **分而治之策略日志**：对超长文档的分块处理过程进行详细日志记录
+- ✅ **添加psutil依赖**：确保进程状态检测功能的稳定运行
+- ✅ **错误降级处理**：智能分块失败时的降级处理过程也会输出相应日志
+
+#### 🔧 技术改进详情
+
+##### 1. 任务处理器锁定机制修复
+**问题**：Docker重启后锁文件残留，导致新的任务处理器无法启动，出现"任务处理器已运行"但实际未运行的假运行状态。
+
+**解决方案**：
+```python
+# 原来基于时间的检测（不准确）
+if datetime.now() - lock_time > timedelta(minutes=10):
+    # 认为锁过期
+
+# 改为基于PID的真实进程检测
+def _is_process_running(self, pid: int) -> bool:
+    try:
+        import psutil
+        return psutil.pid_exists(pid)  # 精确检测进程状态
+    except ImportError:
+        os.kill(pid, 0)  # 降级策略
+        return True
+```
+
+**核心逻辑**：
+- 锁文件存储进程PID而非时间戳
+- 启动时检查PID对应的进程是否真实存在
+- 发现死锁文件时自动清理并继续执行
+- 显示当前进程PID和锁定状态
+
+##### 2. 详细智能分块日志系统
+**原子操作**：为文件导入任务（`file_import`）添加完整的进度监控链路
+
+**进度回调链路**：
+```python
+# 1. 任务处理器层
+TaskProcessor._process_file_import_task(task)
+    ↓ progress_callback
+# 2. AI服务层  
+AIService.create_embeddings(file, progress_callback)
+    ↓ progress_callback
+# 3. 智能分块层
+HierarchicalSplitter.split_document(content, title, file_id, progress_callback)
+    ↓ 各个子方法
+_create_summary_direct/with_divide_conquer(progress_callback)
+_create_outline_direct/with_divide_conquer(progress_callback)
+_create_intelligent_content_layer(progress_callback)
+```
+
+**函数变动**：为以下8个核心方法添加 `progress_callback` 参数支持
+1. `AIService.create_embeddings(file, progress_callback=None)`
+2. `HierarchicalSplitter.split_document(content, title, file_id, progress_callback=None)`
+3. `_create_summary_direct(content, title, file_id, progress_callback=None)`
+4. `_create_summary_with_divide_conquer(content, title, file_id, progress_callback=None)`
+5. `_create_outline_direct(content, title, file_id, progress_callback=None)`
+6. `_create_outline_with_divide_conquer(content, title, file_id, progress_callback=None)`
+7. `_create_intelligent_content_layer(content, title, file_id, outline_docs, progress_callback=None)`
+8. `_create_basic_fallback_chunks(file, progress_callback=None)`
+
+##### 3. 任务队列状态监控
+**新增方法**：
+- `_get_pending_tasks_count()` - 获取待处理任务数量
+- `_log_chunking_progress(file_path, step, message)` - 记录分块进度
+
+**日志分类标识**：
+- 📋 **任务开始**：`开始处理文件导入任务 (待处理任务: X)`
+- 📖 **文件读取**：`文件内容读取完成 (大小: X字符)`
+- 💾 **数据库操作**：`数据库记录保存成功`
+- 🤖 **AI处理**：`开始智能多层次向量分块`
+- 🔧 **分块步骤**：`[摘要生成/大纲提取/内容分块] 具体步骤进度`
+- 🎉 **完成标识**：`文件处理完全成功 | 剩余任务: X`
+
+##### 4. 分而治之策略增强
+**超长文档处理**：
+- 文档长度超过 `llm_context_window * 0.8` 时自动启用分而治之策略
+- 摘要生成：使用Refine策略迭代处理多个文档片段
+- 大纲提取：逐块处理后合并为完整大纲
+- 每个处理步骤都有详细的进度日志
+
+**错误降级处理**：
+- 智能分块失败时自动降级到基本分块策略
+- 降级过程也会输出相应的日志信息
+- 确保每个文件都能成功处理
+
+##### 5. 依赖管理优化
+**新增依赖**：
+```txt
+# 进程状态检测
+psutil>=5.9.0
+```
+
+**移除依赖**：
+```txt
+# 类型检查（开发环境不需要）
+- mypy>=1.7.1
+```
+
+#### 🎯 验证结果
+**修复效果**：
+- ✅ 任务处理器真实状态检测：不再出现假运行问题
+- ✅ 详细智能分块日志：每个步骤都有清晰的进度显示  
+- ✅ 任务队列监控：实时显示剩余待处理任务数量
+- ✅ 全链路进度跟踪：从文件导入到智能分块的完整进度监控
+- ✅ emoji图标分类：不同类型日志有清晰的视觉标识
+- ✅ 错误降级日志：智能分块失败时也有相应的日志输出
+
+**实际日志示例**：
+```
+INFO:app.services.task_processor_service:📋 开始处理文件导入任务: 医学/男科病名医验案解析.md (待处理任务: 2)
+INFO:app.services.task_processor_service:📖 文件内容读取完成: 医学/男科病名医验案解析.md (大小: 144872字符)
+INFO:app.services.task_processor_service:💾 数据库记录保存成功: 医学/男科病名医验案解析.md
+INFO:app.services.task_processor_service:🤖 开始智能多层次向量分块: 医学/男科病名医验案解析.md
+INFO:app.services.task_processor_service:🔧 [摘要生成] 使用分而治之策略生成摘要 | 文件: 医学/男科病名医验案解析.md | 剩余任务: 1
+INFO:app.services.task_processor_service:🔧 [大纲提取] 使用分而治之策略提取大纲 | 文件: 医学/男科病名医验案解析.md | 剩余任务: 1
+INFO:app.services.task_processor_service:🔧 [智能分块] 基于大纲进行智能内容分块 | 文件: 医学/男科病名医验案解析.md | 剩余任务: 1
+INFO:app.services.task_processor_service:🔧 [向量存储] 正在保存 16 个分块到向量数据库 | 文件: 医学/男科病名医验案解析.md | 剩余任务: 1
+INFO:app.services.task_processor_service:🎉 文件处理完全成功: 医学/男科病名医验案解析.md | 剩余任务: 0
+```
+
+#### 📊 代码修改统计
+- **修改文件数**：5个核心文件
+- **新增/修改代码**：约200行代码
+- **函数签名变更**：8个方法添加progress_callback参数
+- **新增方法**：2个监控方法
+- **依赖变更**：+1个新依赖，-1个开发依赖
+
+### v1.3.1 (2025-01-05) - 批量文件上传优化
+- ✅ **修复数据库锁定问题**：解决批量文件上传时的数据库锁定冲突
+- ✅ **新增文件导入任务**：创建`file_import`任务类型，实现"入库+向量化"原子操作
+- ✅ **优化任务队列机制**：文件转换后不再立即写数据库，而是添加到任务队列
+- ✅ **防止并发冲突**：任务处理器串行处理文件导入任务，确保数据一致性
+- ✅ **改进错误处理**：完善文件导入失败的回滚机制
+- ✅ **提升系统稳定性**：解决大量文件上传时的系统不稳定问题
 
 ### v1.3.0 (2025-01-04) - 文件拖拽上传转换功能
 - ✅ 新增文件拖拽上传转换功能

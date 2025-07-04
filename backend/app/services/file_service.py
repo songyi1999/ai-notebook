@@ -10,9 +10,9 @@ from ..schemas.file import FileCreate, FileUpdate
 
 logger = logging.getLogger(__name__)
 
-class FileService:
-    def __init__(self, db: Session):
-        self.db = db
+from ..services.base_service import BaseService
+
+class FileService(BaseService):
 
     def _calculate_content_hash(self, content: str) -> str:
         """计算内容的SHA256哈希值"""
@@ -99,22 +99,14 @@ class FileService:
             raise
     
     def _create_vector_index_sync(self, file: File):
-        """同步创建向量索引"""
+        """同步创建向量索引（使用统一原子操作）"""
         try:
-            from .ai_service_langchain import AIService
-            ai_service = AIService(self.db)
-            
-            if ai_service.is_available():
-                success = ai_service.create_embeddings(file)
-                if success:
-                    logger.info(f"向量索引创建成功: {file.file_path}")
-                else:
-                    logger.error(f"向量索引创建失败: {file.file_path}")
-            else:
-                logger.warning(f"AI服务不可用，跳过向量索引创建: {file.file_path}")
+            # 使用统一的文件处理原子操作
+            self._add_vector_index_task(file)
+            logger.info(f"向量索引创建任务已添加到队列: {file.file_path}")
         except Exception as e:
-            logger.error(f"同步创建向量索引失败: {file.file_path}, 错误: {e}")
-            # 向量索引创建失败不应该影响文件创建，所以不抛出异常
+            logger.error(f"添加向量索引创建任务失败: {file.file_path}, 错误: {e}")
+            # 任务添加失败不应该影响文件创建，所以不抛出异常
 
     def get_file(self, file_id: int) -> Optional[File]:
         return self.db.query(File).filter(File.id == file_id, File.is_deleted == False).first()
@@ -218,16 +210,16 @@ class FileService:
             raise
     
     def _add_vector_index_task(self, file: File):
-        """将向量索引任务添加到后台队列，并检查是否需要启动索引进程"""
+        """将文件处理任务添加到后台队列（统一原子操作）"""
         try:
             from .task_processor_service import TaskProcessorService
             task_processor = TaskProcessorService(self.db)
             
-            # 添加向量索引任务
+            # 添加文件导入任务（统一原子操作：入库+向量化）
             success = task_processor.add_task(
                 file_id=file.id,
                 file_path=file.file_path,
-                task_type="vector_index",
+                task_type="file_import",  # 使用统一的原子操作
                 priority=1  # 普通优先级
             )
             
@@ -288,23 +280,14 @@ class FileService:
             # 启动失败不应该影响文件保存，所以不抛出异常
 
     def _update_vector_index_async(self, file: File):
-        """异步更新向量索引"""
+        """异步更新向量索引（使用统一原子操作）"""
         try:
-            from .ai_service_langchain import AIService
-            ai_service = AIService(self.db)
-            
-            if ai_service.is_available():
-                # 重新创建嵌入向量（会自动删除旧的）
-                success = ai_service.create_embeddings(file)
-                if success:
-                    logger.info(f"向量索引更新成功: {file.file_path}")
-                else:
-                    logger.error(f"向量索引更新失败: {file.file_path}")
-            else:
-                logger.warning(f"AI服务不可用，跳过向量索引更新: {file.file_path}")
+            # 使用统一的文件处理原子操作
+            self._add_vector_index_task(file)
+            logger.info(f"向量索引更新任务已添加到队列: {file.file_path}")
         except Exception as e:
-            logger.error(f"异步更新向量索引失败: {e}")
-            # 向量索引更新失败不应该影响文件保存，所以不抛出异常
+            logger.error(f"添加向量索引更新任务失败: {file.file_path}, 错误: {e}")
+            # 任务添加失败不应该影响文件保存，所以不抛出异常
 
     def delete_file(self, file_id: int) -> Optional[File]:
         db_file = self.get_file(file_id)

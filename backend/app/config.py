@@ -46,6 +46,21 @@ class Settings(BaseSettings):
     embedding_dimension: int = 1536  # OpenAI text-embedding-ada-002
     semantic_search_threshold: float = 1.0  # 语义搜索距离阈值（距离越小越相似，小于此值的结果将被保留）
     
+    # LLM配置
+    llm_context_window: int = 131072  # LLM上下文窗口长度，默认128K tokens
+    
+    # 多层次分块配置（始终启用）
+    enable_hierarchical_chunking: bool = True  # 始终启用多层次分块
+    hierarchical_summary_max_length: int = 2000  # 摘要最大长度
+    hierarchical_outline_max_depth: int = 5      # 大纲最大深度
+    hierarchical_content_target_size: int = 1000 # 内容块目标大小
+    hierarchical_content_max_size: int = 1500    # 内容块最大大小
+    hierarchical_content_overlap: int = 100      # 内容块重叠大小
+    
+    # 智能分块配置
+    chunk_for_llm_processing: int = 30000  # 发送给LLM处理的单个块大小（字符数）
+    max_chunks_for_refine: int = 20  # Refine策略最大处理块数
+    
     def get_embedding_base_url(self) -> Optional[str]:
         """获取嵌入模型API地址，优先使用专用配置，否则回退到通用配置"""
         return self.embedding_base_url or self.openai_base_url
