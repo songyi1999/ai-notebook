@@ -14,8 +14,7 @@ import {
   Tooltip,
   Badge,
   Tag,
-  Slider,
-  Alert
+  Slider
 } from 'antd';
 import {
   ShareAltOutlined,
@@ -614,26 +613,16 @@ const LinkGraph: React.FC<LinkGraphProps> = ({
 
       {/* 图谱容器 */}
       <Card>
-        {stats.totalNodes === 0 ? (
-          <Alert
-            message="暂无图谱数据"
-            description="当前没有文件或链接数据，请先创建一些文件和链接"
-            type="info"
-            showIcon
-            style={{ margin: '50px 0' }}
-          />
-        ) : (
-          <div
-            ref={networkRef}
-            style={{
-              width: '100%',
-              height: '600px',
-              border: '1px solid #d9d9d9',
-              borderRadius: '6px',
-              backgroundColor: '#fafafa'
-            }}
-          />
-        )}
+        <div
+          ref={networkRef}
+          style={{
+            width: '100%',
+            height: '600px',
+            border: '1px solid #d9d9d9',
+            borderRadius: '6px',
+            backgroundColor: '#fafafa'
+          }}
+        />
       </Card>
     </div>
   );

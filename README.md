@@ -32,6 +32,9 @@
 - **可视化展示**：在关系图谱中直观查看链接网络
 
 #### 最新修复（2025-01-04）
+- ✅ **图谱显示修复**：解决了图谱标签页显示为空的问题
+- ✅ **数据流修复**：修正了文件和链接数据的加载与渲染时序
+- ✅ **统计显示正常**：图谱统计信息（节点数、连接数等）正确显示
 - ✅ **数据库结构修复**：修复了links表缺失anchor_text列的问题
 - ✅ **API错误修复**：解决了GET /api/v1/links接口500错误
 - ✅ **数据库兼容性**：使用ALTER TABLE自动添加缺失列，保持数据完整性
@@ -187,58 +190,121 @@ EMBEDDING_MODEL=nomic-embed-text
 
 ### 后端API接口
 
-#### 文件管理
-- `GET /api/v1/files` - 获取文件列表
-- `POST /api/v1/files` - 创建新文件
-- `GET /api/v1/files/{file_id}` - 获取文件详情
-- `PUT /api/v1/files/{file_id}` - 更新文件内容
-- `DELETE /api/v1/files/{file_id}` - 删除文件
+#### 文件管理 (files.py)
+- `POST /api/v1/files` - 创建新文件 ✓使用中
+- `GET /api/v1/files` - 获取文件列表 ⚠️未使用
+- `GET /api/v1/files/by-path/{file_path:path}` - 通过路径获取文件 ✓使用中
+- `GET /api/v1/files/tree/{root_path:path}` - 获取文件树 ✓使用中
+- `POST /api/v1/files/create-directory` - 创建目录 ✓使用中
+- `GET /api/v1/files/search` - 文件搜索 ✓使用中
+- `GET /api/v1/files/search/history` - 搜索历史 ✓使用中
+- `GET /api/v1/files/search/popular` - 热门查询 ✓使用中
+- `POST /api/v1/files/delete-by-path` - 通过路径删除文件 ⚠️未使用
+- `POST /api/v1/files/move` - 移动文件 ✓使用中
+- `GET /api/v1/files/{file_id}` - 获取文件详情 ⚠️未使用
+- `PUT /api/v1/files/{file_id}` - 更新文件内容 ✓使用中
+- `PUT /api/v1/files/by-path/{file_path:path}` - 通过路径更新文件 ⚠️未使用
+- `DELETE /api/v1/files/{file_id}` - 删除文件 ✓使用中
 
-#### 搜索功能
-- `GET /api/v1/search` - 混合搜索接口
-- `GET /api/v1/search/history` - 搜索历史
-- `GET /api/v1/search/popular` - 热门查询
+#### 标签管理 (tags.py)
+- `POST /api/v1/tags` - 创建标签 ✓使用中
+- `GET /api/v1/tags/{tag_id}` - 获取标签详情 ⚠️未使用
+- `GET /api/v1/tags` - 获取标签列表 ✓使用中
+- `GET /api/v1/tags-with-stats` - 获取带统计的标签列表 ✓使用中
+- `GET /api/v1/tags/{tag_id}/usage-count` - 获取标签使用次数 ⚠️未使用
+- `PUT /api/v1/tags/{tag_id}` - 更新标签 ⚠️未使用
+- `DELETE /api/v1/tags/{tag_id}` - 删除标签 ✓使用中
+- `POST /api/v1/file_tags` - 为文件添加标签 ⚠️未使用
+- `GET /api/v1/files/{file_id}/tags` - 获取文件的标签 ⚠️未使用
+- `DELETE /api/v1/files/{file_id}/tags/{tag_id}` - 删除文件标签 ⚠️未使用
 
-#### 标签管理
-- `GET /api/v1/tags` - 获取标签列表
-- `POST /api/v1/tags` - 创建标签
-- `POST /api/v1/files/{file_id}/tags` - 为文件添加标签
-- `POST /api/v1/ai/suggest-tags` - AI标签建议
+#### 链接管理 (links.py)
+- `POST /api/v1/links` - 创建新链接 ✓使用中
+- `GET /api/v1/links/{link_id}` - 获取链接详情 ⚠️未使用
+- `GET /api/v1/files/{file_id}/links` - 获取文件的链接 ⚠️未使用
+- `GET /api/v1/links` - 获取所有链接 ✓使用中
+- `PUT /api/v1/links/{link_id}` - 更新链接 ⚠️未使用
+- `DELETE /api/v1/links/{link_id}` - 删除链接 ✓使用中
 
-#### 链接管理（已修复）
-- `GET /api/v1/links` - 获取所有链接
-- `POST /api/v1/links` - 创建新链接（支持可选link_text）
-- `GET /api/v1/files/{file_id}/links` - 获取文件的链接
-- `PUT /api/v1/links/{link_id}` - 更新链接
-- `DELETE /api/v1/links/{link_id}` - 删除链接
-- `POST /api/v1/ai/discover-links/{file_id}` - AI智能链接发现
+#### AI服务 (ai.py)
+- `POST /api/v1/chat/completions` - OpenAI兼容的聊天接口 ⚠️未使用
+- `POST /api/v1/ai/summary` - 内容摘要 ⚠️未使用
+- `POST /api/v1/ai/suggest-tags` - AI标签建议 ✓使用中
+- `POST /api/v1/ai/create-embeddings/{file_id}` - 创建嵌入 ⚠️未使用
+- `POST /api/v1/ai/semantic-search` - 语义搜索 ⚠️未使用
+- `POST /api/v1/ai/analyze-content` - 内容分析 ⚠️未使用
+- `POST /api/v1/ai/related-questions` - 相关问题 ⚠️未使用
+- `POST /api/v1/ai/chat` - RAG智能问答 ⚠️未使用
+- `POST /api/v1/ai/discover-links/{file_id}` - AI链接发现 ✓使用中
+- `GET /api/v1/ai/status` - AI服务状态检查 ⚠️未使用
 
-#### AI服务
-- `POST /api/v1/ai/chat` - RAG智能问答
-- `GET /api/v1/ai/status` - AI服务状态检查
-- `POST /api/v1/ai/suggest-tags` - AI标签建议
-- `POST /api/v1/ai/discover-links/{file_id}` - AI链接发现
+#### 索引管理 (index.py)
+- `GET /api/v1/index/status` - 索引状态 ⚠️未使用
+- `POST /api/v1/index/rebuild` - 重建索引 ✓使用中
+- `GET /api/v1/index/progress` - 重建进度 ⚠️未使用
+- `POST /api/v1/index/scan` - 扫描文件 ⚠️未使用
+- `GET /api/v1/index/system-status` - 系统状态 ✓使用中
 
-#### MCP集成
-- `GET /api/v1/mcp/servers` - MCP服务器列表
-- `POST /api/v1/mcp/servers` - 创建MCP服务器
-- `GET /api/v1/mcp/tools` - MCP工具列表
-- `POST /api/v1/mcp/tool-calls` - MCP工具调用
+#### 任务管理 (tasks.py)
+- `GET /api/v1/tasks/statistics` - 任务统计 ⚠️未使用
+- `POST /api/v1/tasks/cleanup/duplicates` - 清理重复任务 ⚠️未使用
+- `POST /api/v1/tasks/cleanup/old` - 清理旧任务 ⚠️未使用
+- `POST /api/v1/tasks/process/file` - 处理文件 ⚠️未使用
+- `GET /api/v1/tasks/health` - 健康检查 ⚠️未使用
+
+#### MCP集成 (mcp.py)
+- `POST /api/v1/mcp/servers` - 创建MCP服务器 ✓使用中
+- `GET /api/v1/mcp/servers` - MCP服务器列表 ✓使用中
+- `GET /api/v1/mcp/servers/{server_id}` - 获取服务器详情 ⚠️未使用
+- `PUT /api/v1/mcp/servers/{server_id}` - 更新服务器 ✓使用中
+- `DELETE /api/v1/mcp/servers/{server_id}` - 删除服务器 ✓使用中
+- `POST /api/v1/mcp/servers/{server_id}/connect` - 连接服务器 ✓使用中
+- `POST /api/v1/mcp/servers/{server_id}/disconnect` - 断开连接 ✓使用中
+- `GET /api/v1/mcp/servers/{server_id}/status` - 服务器状态 ⚠️未使用
+- `POST /api/v1/mcp/servers/{server_id}/discover-tools` - 发现工具 ⚠️未使用
+- `GET /api/v1/mcp/tools` - MCP工具列表 ✓使用中
+- `GET /api/v1/mcp/tools/{tool_id}` - 获取工具详情 ⚠️未使用
+- `POST /api/v1/mcp/tools/call` - MCP工具调用 ⚠️未使用
+- `GET /api/v1/mcp/tool-calls` - 工具调用历史 ⚠️未使用
+- `GET /api/v1/mcp/tool-calls/{call_id}` - 获取调用详情 ⚠️未使用
+- `POST /api/v1/mcp/tool-calls/{call_id}/feedback` - 调用反馈 ⚠️未使用
+- `GET /api/v1/mcp/stats` - MCP统计信息 ✓使用中
 
 ### 前端组件
 
 #### 主要组件
-- `NoteEditor` - 主编辑器组件（包含6个标签页）
-- `FileTree` - 文件树组件
-- `SearchModal` - 搜索模态框
-- `ChatModal` - AI聊天模态框
+- `App` - 主应用组件
+- `NoteEditor` - 主编辑器组件（包含6个标签页）✓使用中
+- `FileTree` - 文件树组件 ✓使用中
+- `SearchModal` - 搜索模态框 ✓使用中
+- `ChatModal` - AI聊天模态框 ✓使用中
 
 #### 功能组件
-- `TagManager` - 标签管理组件
-- `LinkManager` - 链接管理组件（已集成）
-- `AutoProcessor` - AI批量处理组件
-- `LinkGraph` - 关系图谱组件
-- `MCPManager` - MCP工具管理组件
+- `TagManager` - 标签管理组件 ✓使用中
+- `LinkManager` - 链接管理组件 ✓使用中
+- `AutoProcessor` - AI批量处理组件 ✓使用中
+- `LinkGraph` - 关系图谱组件 ✓使用中
+- `MCPManager` - MCP工具管理组件 ✓使用中
+- `ResizableSider` - 可调整大小的侧边栏 ✓使用中
+- `StreamingTypewriter` - 流式打字效果组件 ⚠️未使用
+- `TypewriterText` - 打字效果文本组件 ⚠️未使用
+
+### API使用状态说明
+- ✓使用中：已被前端组件调用的接口
+- ⚠️未使用：已实现但未被前端调用的接口（建议评估是否需要保留）
+
+### 建议清理的无用接口
+
+#### 完全未使用的接口（建议删除）
+1. **任务管理模块** - 整个tasks.py模块的所有接口都未被使用
+2. **AI服务** - 多数AI接口未被使用，只有标签建议和链接发现在使用
+3. **文件标签关联** - file_tags相关的3个接口未被使用
+4. **部分文件操作** - 一些重复的文件操作接口未被使用
+
+#### 可能有用但当前未使用的接口（建议保留）
+1. **MCP工具调用** - 虽然未使用但是核心功能，应保留
+2. **AI聊天** - 核心功能，应保留
+3. **索引进度查询** - 可能在后台任务中有用
 
 ## 变量说明
 
