@@ -135,6 +135,18 @@ const MCPManager: React.FC = () => {
     }
   };
 
+  // 添加断开连接功能
+  const handleDisconnectServer = async (serverId: number) => {
+    try {
+      await mcpApi.disconnectServer(serverId);
+      message.success('断开连接成功');
+      loadServers();
+      loadStats();
+    } catch (error) {
+      message.error('断开连接失败');
+    }
+  };
+
   const handleModalOk = async () => {
     try {
       const values = await form.validateFields();
@@ -225,11 +237,18 @@ const MCPManager: React.FC = () => {
           
           {record.is_connected ? (
             <Tooltip title="断开连接">
-              <Button
-                size="small"
-                icon={<DisconnectOutlined />}
-                onClick={() => {}}
-              />
+              <Popconfirm
+                title="确定要断开连接吗？"
+                onConfirm={() => handleDisconnectServer(record.id)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button
+                  size="small"
+                  icon={<DisconnectOutlined />}
+                  danger
+                />
+              </Popconfirm>
             </Tooltip>
           ) : (
             <Tooltip title="连接">
@@ -377,12 +396,29 @@ const MCPManager: React.FC = () => {
                 刷新工具列表
               </Button>
             </div>
-            <Table
-              columns={toolColumns}
-              dataSource={tools}
-              rowKey="id"
-              pagination={{ pageSize: 10 }}
-            />
+            {/* 调整容器高度，确保分页组件在正常窗口下可见 */}
+            <div style={{ 
+              height: '400px', 
+              display: 'flex',
+              flexDirection: 'column',
+              border: '1px solid #f0f0f0',
+              borderRadius: '6px'
+            }}>
+              <Table
+                columns={toolColumns}
+                dataSource={tools}
+                rowKey="id"
+                pagination={{ 
+                  pageSize: 10,
+                  showSizeChanger: false,
+                  showQuickJumper: false,
+                  showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`
+                }}
+                scroll={{ y: 280 }}
+                size="small"
+                style={{ flex: 1 }}
+              />
+            </div>
           </TabPane>
         </Tabs>
       </Card>

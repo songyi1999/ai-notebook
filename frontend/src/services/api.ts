@@ -505,7 +505,8 @@ export class ApiClient {
 
     // 获取系统状态
     async getSystemStatus(): Promise<SystemStatus> {
-        return this.request<SystemStatus>('/index/status');
+        const response = await this.request<{ success: boolean; data: SystemStatus }>('/index/system-status');
+        return response.data;
     }
 }
 
