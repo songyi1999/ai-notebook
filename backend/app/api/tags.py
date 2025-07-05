@@ -29,10 +29,10 @@ def read_all_tags_api(skip: int = 0, limit: int = 100, db: Session = Depends(get
     return tags
 
 @router.get("/tags-with-stats", response_model=List[Dict[str, Any]])
-def read_tags_with_stats_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_tags_with_stats_api(skip: int = 0, limit: int = 100, include_recent_files: bool = False, db: Session = Depends(get_db)):
     """获取带使用统计的标签列表"""
     tag_service = TagService(db)
-    tags_with_stats = tag_service.get_tags_with_usage_stats(skip=skip, limit=limit)
+    tags_with_stats = tag_service.get_tags_with_usage_stats(skip=skip, limit=limit, include_recent_files=include_recent_files)
     return tags_with_stats
 
 @router.get("/tags/{tag_id}/usage-count")

@@ -1,5 +1,28 @@
 # AI笔记本项目
 
+## 🚀 快速部署
+
+### 一键部署（推荐）
+
+**Linux/macOS:**
+```bash
+git clone <your-repository-url>
+cd AI笔记本项目
+./setup.sh
+```
+
+**Windows:**
+```cmd
+git clone <your-repository-url>
+cd AI笔记本项目
+setup.bat
+```
+
+### 手动部署
+如果自动脚本遇到问题，请参考 [快速部署指南](QUICK_DEPLOY.md)
+
+---
+
 ## 项目概述
 
 一个**纯本地运行、AI增强**的个人知识管理系统，专注于隐私保护和数据安全。
@@ -44,6 +67,8 @@
 - ✅ 实现了智能默认值生成：自动使用目标文件名作为链接文本
 - ✅ 完善了组件集成检查，确保所有功能组件都正确集成到主界面
 - ✅ **代码重构**：清理了ai_service_langchain.py中的重复代码实现，从2243行优化到1825行，提升代码可维护性
+- ✅ **修复TagService缺失**：补充了tag_service.py中缺失的TagService类，解决了启动时"ImportError: cannot import name 'TagService'"错误
+- ✅ **优化TagService实现**：结合历史版本优点，改进了标签统计功能，支持可选的recent_files信息和更高效的SQL查询
 
 ### 🔍 智能搜索
 - **关键词搜索**：基于SQLite FTS5全文搜索
@@ -76,6 +101,15 @@
 - **智能提醒**：当有待索引任务且处理器停止时，显示醒目的"开始索引"按钮
 - **状态指示器**：绿色●表示运行中，红色○表示已停止
 - **自动刷新**：每60秒自动刷新系统状态
+
+#### 最新修复（2025-01-04）
+- ✅ **锁文件管理修复**：解决了任务处理器状态检查时误清理锁文件的问题
+- ✅ **状态显示修复**：修复了处理器运行时前端显示空闲的问题
+- ✅ **进程检查优化**：采用保守策略，避免误判任务处理器状态
+- ✅ **锁文件清理时机**：仅在应用启动和强制启动时清理锁文件
+- ✅ **详细日志增强**：在"基于大纲的智能分块"等关键步骤添加详细日志输出
+- ✅ **智能分块匹配优化**：改进大纲匹配算法，使用多维度匹配提高中文医学内容的匹配成功率
+- ✅ **正则表达式语法修复**：修复了 `_clean_text_for_matching` 方法中的正则表达式引号匹配错误
 
 ### 🛠️ MCP工具集成
 - **协议支持**：完整的Model Context Protocol支持
@@ -650,6 +684,226 @@ markdown_lines.append(line)
 - ✅ 不再添加任何多余的##符号
 - ✅ 用户可以按需手动添加Markdown格式
 - ✅ 提高转换结果的可预测性和一致性
+
+### v1.3.7 (2025-01-05) - 部署优化与问题修复 🚀
+
+**主要改进**
+- ✅ **一键部署脚本**：创建了完整的部署脚本 `setup.sh`（Linux/macOS）和 `setup.bat`（Windows）
+- ✅ **部署问题修复**：解决了别人下载代码后无法正常部署的问题
+- ✅ **配置文件管理**：修复 `.gitignore` 配置，确保示例文件不被忽略
+- ✅ **自动环境初始化**：自动创建必要目录（`notes/`、`backend/data/`等）
+- ✅ **配置文件复制**：自动从示例文件生成实际配置文件
+- ✅ **MCP工具验证机制**：添加工具数据验证，防止无效字段导致注册失败
+- ✅ **部署文档完善**：创建详细的 [快速部署指南](QUICK_DEPLOY.md)
+
+**技术细节**
+- 修复了 `docker-compose.yml` 被 `.gitignore` 忽略的问题
+- 移除了硬编码的API密钥，使用环境变量配置
+- 添加了 `validate_mcp_tool()` 函数，验证工具字段有效性
+- 优化了Docker配置，提升部署成功率
+
+**部署体验**
+- 用户现在只需运行 `./setup.sh` 或 `setup.bat` 即可一键部署
+- 自动检查系统要求（Docker、Docker Compose）
+- 智能处理配置文件和目录创建
+- 提供详细的部署状态反馈和错误处理
+
+### v1.3.6 (2025-01-05) - MCP工具发现修复 🔧
+- ✅ **MCP工具字段错误修复**：修复MCPTool创建时的'annotations'字段错误
+- ✅ **12个高德地图工具完全恢复**：经纬度转换、天气查询、路径规划等所有功能
+- ✅ **工具发现流程修复**：SSE类型MCP服务器的工具发现现在正常工作
+- ✅ **前端显示完全正常**：MCP工具界面显示"12/12"可用工具
+- ✅ **数据库同步完成**：所有工具已正确保存到数据库并标记为可用状态
+
+#### 🔧 技术修复详情
+
+##### 问题诊断
+**原始问题**：用户添加高德地图MCP服务器后，前端显示0个可用工具，但该服务器应该有12个工具
+
+**错误日志分析**：
+```
+TypeError: 'annotations' is an invalid keyword argument for MCPTool
+```
+
+##### 根本原因
+在 `backend/app/services/mcp_service.py` 的 `discover_tools` 方法中，创建MCPTool实例时传递了不存在的 `annotations` 字段，导致工具创建失败。
+
+##### 修复方案
+**修改文件**：`backend/app/services/mcp_service.py`
+
+**修复前**：
+```python
+tool = MCPTool(
+    server_id=server.id,
+    tool_name=tool_def["name"],
+    tool_description=tool_def.get("description", ""),
+    input_schema=tool_def.get("inputSchema", {}),
+    annotations=tool_def.get("annotations", {}),  # ❌ 字段不存在
+    created_at=datetime.utcnow()
+)
+```
+
+**修复后**：
+```python
+tool = MCPTool(
+    server_id=server.id,
+    tool_name=tool_def["name"],
+    tool_description=tool_def.get("description", ""),
+    input_schema=tool_def.get("inputSchema", {}),  # ✅ 移除无效字段
+    created_at=datetime.utcnow()
+)
+```
+
+##### 验证结果
+
+**数据库验证**：
+- ✅ 12个高德地图工具全部入库
+- ✅ 所有工具标记为可用状态（is_available=True）
+- ✅ 服务器连接状态正常（is_connected=True）
+
+**前端界面验证**：
+- ✅ MCP服务器：1/1
+- ✅ 可用工具：12/12
+- ✅ 工具列表正确显示所有功能
+
+**可用工具清单**：
+1. `maps_regeocode` - 经纬度坐标转地址
+2. `maps_geo` - 地址转经纬度坐标
+3. `maps_ip_location` - IP地址定位
+4. `maps_weather` - 城市天气查询
+5. `maps_search_detail` - POI详情查询
+6. `maps_bicycling` - 骑行路径规划
+7. `maps_direction_walking` - 步行路径规划
+8. `maps_direction_driving` - 驾车路径规划
+9. `maps_direction_transit_integrated` - 公交路径规划
+10. `maps_distance` - 距离测量
+11. `maps_text_search` - 关键词搜索
+12. `maps_around_search` - 周边搜索
+
+##### 技术收获
+- 📝 **字段验证重要性**：创建数据库模型实例时必须严格匹配定义的字段
+- 🔍 **错误诊断技巧**：通过直接执行Python代码快速定位问题根源
+- 🛠️ **MCP协议理解**：深入了解了MCP工具发现和管理流程
+- ✅ **完整测试流程**：从后端修复到前端验证的完整质量保证
+
+### v1.3.5 (2025-01-05) - 向量化错误修复与元数据完善 🛠️
+- ✅ **vector_model字段错误修复**：修复智能分块过程中"'vector_model'"KeyError错误
+- ✅ **元数据一致性优化**：为所有Document层次（摘要、大纲、内容）统一添加vector_model字段
+- ✅ **错误处理增强**：AI服务中增加了对缺失vector_model字段的容错处理
+- ✅ **分块标识完善**：不同分块策略使用不同的vector_model标识，便于跟踪和调试
+- ✅ **PDF上传完全修复**：现在PDF文件可以成功上传、转换、入库和向量化
+
+#### 🔧 技术改进详情
+
+##### vector_model字段统一
+
+**修复的Document层次**：
+```python
+# 摘要层
+"vector_model": "hierarchical_summary"
+
+# 大纲层  
+"vector_model": "hierarchical_outline"
+
+# 内容层
+"vector_model": "hierarchical_intelligent"  # 智能分块
+"vector_model": "recursive_fallback"        # 递归分块
+"vector_model": "simple_fallback"           # 简单分块
+```
+
+**错误处理改进**：
+```python
+# 在ai_service_langchain.py中添加容错处理
+vector_model = doc.metadata.get('vector_model', 'unknown')
+```
+
+##### 错误修复前后对比
+
+**修复前**：
+- ❌ 摘要层和大纲层Document缺少vector_model字段
+- ❌ 保存嵌入元数据时出现KeyError: 'vector_model'
+- ❌ 导致PDF上传任务中断，向量化失败
+
+**修复后**：
+- ✅ 所有Document层次都有完整的vector_model字段
+- ✅ 元数据保存过程完全正常
+- ✅ PDF文件从上传到向量化全流程成功
+
+### v1.3.4 (2025-01-05) - PDF文件上传修复与路径优化 📄
+- ✅ **PDF支持修复**：添加缺失的pypdf>=4.0.1依赖，完全修复PDF文件上传转换功能
+- ✅ **文件路径处理优化**：修复文件导入任务中的路径重复问题（notes/notes/文件名 → notes/文件名）
+- ✅ **智能路径处理**：任务处理器现在能智能识别相对路径和完整路径，自动标准化处理
+- ✅ **数据库路径一致性**：确保数据库中存储的文件路径格式始终一致（统一使用notes/前缀）
+- ✅ **错误处理改进**：优化文件导入任务的错误日志和异常处理机制
+- ✅ **路径查询优化**：修复现有文件记录查找时的路径匹配逻辑
+
+#### 🔧 技术改进详情
+
+##### PDF支持修复
+**问题**：尝试上传PDF文件时出现 `pypdf package not found` 错误
+**解决方案**：
+- 在 `backend/requirements.txt` 中添加 `pypdf>=4.0.1` 依赖
+- 重新构建容器确保PDF处理库正确安装
+
+##### 文件路径处理优化
+**问题核心**：文件上传转换过程中的路径处理不一致
+- 文件上传时传递相对路径：`PostHog 注册与前端集成指南_.md`
+- 任务处理器添加前缀：`./notes/PostHog 注册与前端集成指南_.md`
+- 实际形成路径：`notes/notes/PostHog 注册与前端集成指南_.md`（重复）
+
+**修复方案**：
+```python
+# 智能路径处理逻辑
+if task.file_path.startswith("notes/") or task.file_path.startswith("./notes/"):
+    # 已包含完整路径，直接使用
+    file_path = Path(task.file_path)
+else:
+    # 相对路径，需要添加notes前缀
+    file_path = Path("./notes") / task.file_path
+
+# 数据库路径标准化
+normalized_path = task.file_path
+if not normalized_path.startswith("notes/"):
+    normalized_path = f"notes/{normalized_path}"
+```
+
+**优化效果**：
+- 🗂️ **路径一致性**：数据库中的文件路径格式统一为 `notes/文件名`
+- 🔄 **兼容性处理**：同时支持相对路径和完整路径的输入
+- 🛡️ **错误预防**：避免路径重复导致的文件找不到错误
+- 📝 **日志改进**：所有相关日志都使用标准化路径格式
+
+##### 修改文件统计
+- **核心文件**：`backend/app/services/task_processor_service.py`
+- **修改行数**：约25行代码修改
+- **新增逻辑**：智能路径识别和标准化处理
+- **依赖更新**：`backend/requirements.txt` 添加pypdf包
+
+### v1.3.3 (2025-01-05) - 前端性能优化 🚀
+- ✅ **系统状态调用频率优化**：将前端system-status API调用频率从每60秒改为每30分钟一次
+- ✅ **减少服务器负载**：大幅降低后端API调用频率，减少不必要的系统资源消耗
+- ✅ **保持功能完整性**：首次加载时仍会获取系统状态，确保界面正常显示
+- ✅ **改进用户体验**：减少频繁的网络请求，提升整体系统响应速度
+
+#### 🔧 技术改进详情
+
+##### 优化细节
+**修改文件**：`frontend/src/components/NoteEditor.tsx`
+
+**调用频率变更**：
+```typescript
+// 优化前：每60秒请求一次
+const statusInterval = setInterval(loadSystemStatus, 60000);
+
+// 优化后：每30分钟请求一次
+const statusInterval = setInterval(loadSystemStatus, 1800000);
+```
+
+**优化效果**：
+- 🔄 **请求频率**：从每小时60次减少到每小时2次（降低96.7%）
+- 🚀 **性能提升**：减少后端API压力，提升系统整体响应速度
+- 💻 **资源节约**：降低网络开销和服务器CPU占用
+- 🎯 **用户体验**：保持界面功能完整性的同时优化性能
 
 ### v1.3.2 (2025-01-05) - 任务处理器修复与日志增强 🛠️
 - ✅ **修复任务处理器锁定问题**：解决Docker重启后"任务处理器已运行但实际未运行"的假运行问题

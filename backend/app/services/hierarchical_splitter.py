@@ -94,15 +94,38 @@ class IntelligentHierarchicalSplitter:
             # Level 3: 基于大纲的智能内容分块
             if progress_callback:
                 progress_callback("智能分块", "基于大纲进行智能内容分块")
-            content_docs = self._create_intelligent_content_layer(content, title, file_id, outline_docs, progress_callback)
             
+            logger.info("🧠 开始第三层：基于大纲的智能内容分块")
+            content_docs = self._create_intelligent_content_layer(content, title, file_id, outline_docs, progress_callback)
+            logger.info(f"✅ 第三层完成，内容层生成: {len(content_docs)} 个文档")
+            
+            # 组装最终结果
             result = {
                 'summary': summary_docs,
                 'outline': outline_docs,
                 'content': content_docs
             }
             
-            logger.info(f"智能分块完成: 摘要={len(summary_docs)}, 大纲={len(outline_docs)}, 内容={len(content_docs)}")
+            # 最终统计和验证
+            total_docs = len(summary_docs) + len(outline_docs) + len(content_docs)
+            logger.info(f"📊 智能分块最终统计:")
+            logger.info(f"  📝 摘要层: {len(summary_docs)} 个文档")
+            logger.info(f"  📋 大纲层: {len(outline_docs)} 个文档") 
+            logger.info(f"  📄 内容层: {len(content_docs)} 个文档")
+            logger.info(f"  📊 总计: {total_docs} 个文档")
+            
+            # 验证结果的完整性
+            if total_docs == 0:
+                logger.error("❌ 智能分块最终结果为空，这不应该发生")
+                raise Exception("智能分块结果为空")
+            
+            if len(summary_docs) == 0:
+                logger.warning("⚠️ 没有生成摘要文档")
+            
+            if len(content_docs) == 0:
+                logger.warning("⚠️ 没有生成内容文档")
+            
+            logger.info(f"🎉 智能分块完成: 摘要={len(summary_docs)}, 大纲={len(outline_docs)}, 内容={len(content_docs)}")
             return result
             
         except Exception as e:
@@ -141,7 +164,8 @@ class IntelligentHierarchicalSplitter:
                     "chunk_hash": hashlib.sha256(summary.encode()).hexdigest(),
                     "parent_heading": None,
                     "section_path": "全文摘要",
-                    "generation_method": "direct_llm"
+                    "generation_method": "direct_llm",
+                    "vector_model": "hierarchical_summary"
                 }
             )
             
@@ -219,7 +243,8 @@ class IntelligentHierarchicalSplitter:
                         "parent_heading": None,
                         "section_path": "全文摘要",
                         "generation_method": "divide_conquer_refine",
-                        "processed_chunks": min(len(chunks), self.max_refine_chunks)
+                        "processed_chunks": min(len(chunks), self.max_refine_chunks),
+                        "vector_model": "hierarchical_summary"
                     }
                 )
                 
@@ -364,7 +389,8 @@ class IntelligentHierarchicalSplitter:
                             "parent_heading": None,
                             "section_path": line,
                             "outline_level": 1,
-                            "generation_method": generation_method
+                            "generation_method": generation_method,
+                            "vector_model": "hierarchical_outline"
                         }
                     )
                     outline_docs.append(doc)
@@ -382,7 +408,8 @@ class IntelligentHierarchicalSplitter:
                             "parent_heading": current_level_1,
                             "section_path": f"{current_level_1} / {line.strip()}" if current_level_1 else line.strip(),
                             "outline_level": 2,
-                            "generation_method": generation_method
+                            "generation_method": generation_method,
+                            "vector_model": "hierarchical_outline"
                         }
                     )
                     outline_docs.append(doc)
@@ -400,7 +427,8 @@ class IntelligentHierarchicalSplitter:
                             "parent_heading": current_level_1,
                             "section_path": f"{current_level_1} / {line.strip()}" if current_level_1 else line.strip(),
                             "outline_level": 3,
-                            "generation_method": generation_method
+                            "generation_method": generation_method,
+                            "vector_model": "hierarchical_outline"
                         }
                     )
                     outline_docs.append(doc)
@@ -413,130 +441,525 @@ class IntelligentHierarchicalSplitter:
     
     def _create_intelligent_content_layer(self, content: str, title: str, file_id: int, outline_docs: List[Document], progress_callback=None) -> List[Document]:
         """创建智能内容层（基于大纲的语义分块）"""
+        import time
+        start_time = time.time()
+        
         try:
+            logger.info(f"🔄 开始创建智能内容层 - 文件ID: {file_id}, 标题: {title}")
+            logger.info(f"📄 内容长度: {len(content)} 字符")
+            logger.info(f"📋 大纲文档数量: {len(outline_docs) if outline_docs else 0}")
+            
+            # 验证输入参数
+            if not content or not content.strip():
+                logger.error("❌ 内容为空，无法进行智能分块")
+                return []
+            
             if not outline_docs:
                 # 没有大纲时，使用递归字符分块
-                logger.info("没有大纲，使用递归字符分块")
+                logger.info("⚠️ 没有大纲文档，降级使用递归字符分块")
                 if progress_callback:
                     progress_callback("递归分块", "没有大纲，使用基本递归分块")
                 return self._recursive_chunk_content(content, title, file_id)
             
             # 基于大纲进行智能分块
-            logger.info(f"基于 {len(outline_docs)} 个大纲项目进行智能分块")
+            logger.info(f"🧠 基于 {len(outline_docs)} 个大纲项目进行智能分块")
+            
+            # 输出大纲文档的详细信息
+            for i, outline_doc in enumerate(outline_docs[:3]):  # 只显示前3个
+                logger.info(f"  📝 大纲 {i+1}: {outline_doc.page_content[:50]}...")
+                logger.info(f"      章节路径: {outline_doc.metadata.get('section_path', 'N/A')}")
             
             if progress_callback:
                 progress_callback("智能分块", f"基于 {len(outline_docs)} 个大纲项目进行智能分块")
             
-            # 简化实现：使用递归分块，但保留大纲信息
-            chunks = self.content_splitter.split_text(content)
+            # 使用内容分割器进行分块
+            logger.info("🔪 开始使用内容分割器进行分块...")
+            try:
+                chunks = self.content_splitter.split_text(content)
+                logger.info(f"✅ 分块完成，共生成 {len(chunks)} 个内容块")
+                
+                # 验证分块结果
+                if not chunks:
+                    logger.error("❌ 分块结果为空，降级到递归分块")
+                    return self._recursive_chunk_content(content, title, file_id)
+                
+                # 统计分块信息
+                total_chars = sum(len(chunk) for chunk in chunks)
+                avg_length = total_chars / len(chunks) if chunks else 0
+                logger.info(f"📊 分块统计 - 总字符数: {total_chars}, 平均长度: {avg_length:.0f}, 块数: {len(chunks)}")
+                
+            except Exception as e:
+                logger.error(f"❌ 内容分割器失败: {e}")
+                logger.error(f"📋 内容分割器配置: chunk_size={self.content_splitter.chunk_size}, overlap={self.content_splitter.chunk_overlap}")
+                return self._recursive_chunk_content(content, title, file_id)
+            
+            # 创建内容文档
+            logger.info("🏗️ 开始创建内容文档并匹配大纲...")
             content_docs = []
+            matched_outlines = 0
             
             for i, chunk in enumerate(chunks):
-                # 为每个内容块找到最相关的大纲项目
-                best_outline = self._find_best_outline_for_chunk(chunk, outline_docs)
+                try:
+                    logger.info(f"🔍 处理第 {i+1}/{len(chunks)} 个内容块 (长度: {len(chunk)} 字符)")
+                    
+                    # 验证内容块
+                    if not chunk or not chunk.strip():
+                        logger.warning(f"⚠️ 第 {i+1} 个内容块为空，跳过")
+                        continue
+                    
+                    # 为每个内容块找到最相关的大纲项目
+                    best_outline = self._find_best_outline_for_chunk(chunk, outline_docs)
+                    
+                    if best_outline:
+                        matched_outlines += 1
+                        logger.info(f"✅ 为内容块 {i+1} 匹配到大纲: {best_outline.get('section_path', 'N/A')}")
+                    else:
+                        logger.info(f"⚠️ 内容块 {i+1} 未匹配到相关大纲")
+                    
+                    # 创建文档对象
+                    doc = Document(
+                        page_content=chunk,
+                        metadata={
+                            "file_id": file_id,
+                            "chunk_type": "content",
+                            "chunk_level": 3,
+                            "chunk_index": i,
+                            "title": title,
+                            "chunk_hash": hashlib.sha256(chunk.encode()).hexdigest(),
+                            "parent_heading": best_outline.get('section_path') if best_outline else None,
+                            "section_path": f"内容块-{i+1}",
+                            "related_outline": best_outline.get('content') if best_outline else None,
+                            "vector_model": "hierarchical_intelligent"
+                        }
+                    )
+                    content_docs.append(doc)
+                    
+                    # 每10个块输出一次进度
+                    if (i + 1) % 10 == 0:
+                        logger.info(f"📈 进度: {i+1}/{len(chunks)} 个内容块已处理")
                 
-                doc = Document(
-                    page_content=chunk,
-                    metadata={
-                        "file_id": file_id,
-                        "chunk_type": "content",
-                        "chunk_level": 3,
-                        "chunk_index": i,
-                        "title": title,
-                        "chunk_hash": hashlib.sha256(chunk.encode()).hexdigest(),
-                        "parent_heading": best_outline.get('section_path') if best_outline else None,
-                        "section_path": f"内容块-{i+1}",
-                        "related_outline": best_outline.get('content') if best_outline else None
-                    }
-                )
-                content_docs.append(doc)
+                except Exception as e:
+                    logger.error(f"❌ 处理第 {i+1} 个内容块时发生错误: {e}")
+                    import traceback
+                    logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+                    continue
+            
+            # 统计结果
+            processing_time = time.time() - start_time
+            logger.info(f"📊 智能内容分块统计:")
+            logger.info(f"  ✅ 成功创建: {len(content_docs)} 个内容文档")
+            logger.info(f"  🎯 大纲匹配: {matched_outlines}/{len(content_docs)} 个内容块")
+            logger.info(f"  ⏱️ 处理时间: {processing_time:.2f} 秒")
+            logger.info(f"  📊 匹配率: {matched_outlines/len(content_docs)*100:.1f}%")
             
             if progress_callback:
                 progress_callback("分块完成", f"智能内容分块完成，生成 {len(content_docs)} 个内容块")
             
-            logger.info(f"智能内容分块完成，生成 {len(content_docs)} 个内容块")
+            # 验证最终结果
+            if not content_docs:
+                logger.error("❌ 智能内容分块结果为空，降级到递归分块")
+                return self._recursive_chunk_content(content, title, file_id)
+            
+            logger.info(f"🎉 智能内容分块完成，生成 {len(content_docs)} 个内容块")
             return content_docs
             
         except Exception as e:
-            logger.error(f"智能内容分块失败: {e}")
+            processing_time = time.time() - start_time
+            logger.error(f"❌ 智能内容分块失败 (耗时: {processing_time:.2f}s): {e}")
+            import traceback
+            logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+            
             if progress_callback:
                 progress_callback("降级处理", f"智能分块失败: {str(e)}")
+            
+            # 降级到递归分块
+            logger.info("🔄 降级到递归分块处理...")
             return self._recursive_chunk_content(content, title, file_id)
     
     def _find_best_outline_for_chunk(self, chunk: str, outline_docs: List[Document]) -> Optional[Dict[str, str]]:
         """为内容块找到最相关的大纲项目"""
         try:
-            # 简单实现：基于关键词匹配
-            chunk_words = set(chunk.lower().split())
+            if not chunk or not chunk.strip():
+                logger.warning("⚠️ 输入的内容块为空，无法匹配大纲")
+                return None
+            
+            if not outline_docs:
+                logger.warning("⚠️ 没有大纲文档可供匹配")
+                return None
+            
+            # 改进的匹配算法：多维度匹配
             best_match = None
             best_score = 0
+            match_details = []
             
-            for outline_doc in outline_docs:
-                outline_words = set(outline_doc.page_content.lower().split())
-                # 计算交集得分
-                intersection = len(chunk_words & outline_words)
-                if intersection > best_score:
-                    best_score = intersection
-                    best_match = {
-                        'content': outline_doc.page_content,
-                        'section_path': outline_doc.metadata.get('section_path', '')
-                    }
+            # 预处理内容块
+            chunk_clean = self._clean_text_for_matching(chunk)
+            chunk_keywords = self._extract_keywords(chunk_clean)
             
-            return best_match
-        except:
+            logger.debug(f"🔍 开始匹配大纲，内容块长度: {len(chunk)} 字符")
+            logger.debug(f"🔤 提取关键词: {list(chunk_keywords)[:10]}...")  # 只显示前10个关键词
+            
+            for i, outline_doc in enumerate(outline_docs):
+                try:
+                    outline_content = outline_doc.page_content
+                    if not outline_content or not outline_content.strip():
+                        logger.debug(f"⚠️ 大纲 {i+1} 内容为空，跳过")
+                        continue
+                    
+                    # 预处理大纲内容
+                    outline_clean = self._clean_text_for_matching(outline_content)
+                    outline_keywords = self._extract_keywords(outline_clean)
+                    
+                    # 计算多维度匹配得分
+                    score = self._calculate_match_score(chunk_clean, outline_clean, chunk_keywords, outline_keywords)
+                    
+                    match_details.append({
+                        'outline_index': i,
+                        'outline_content': outline_content[:50] + '...' if len(outline_content) > 50 else outline_content,
+                        'section_path': outline_doc.metadata.get('section_path', 'N/A'),
+                        'score': score,
+                        'keywords_intersection': len(chunk_keywords & outline_keywords)
+                    })
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = {
+                            'content': outline_content,
+                            'section_path': outline_doc.metadata.get('section_path', ''),
+                            'score': score,
+                            'keywords_intersection': len(chunk_keywords & outline_keywords)
+                        }
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ 处理大纲 {i+1} 时发生错误: {e}")
+                    continue
+            
+            # 输出匹配详情 (调试模式)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("🔍 大纲匹配详情:")
+                sorted_details = sorted(match_details, key=lambda x: x['score'], reverse=True)
+                for detail in sorted_details[:3]:  # 只显示前3个最佳匹配
+                    logger.debug(f"  📝 大纲: {detail['outline_content']}")
+                    logger.debug(f"      路径: {detail['section_path']}")
+                    logger.debug(f"      得分: {detail['score']:.3f}, 关键词交集: {detail['keywords_intersection']}")
+            
+            # 设置匹配阈值
+            min_score_threshold = 0.1  # 最低匹配得分
+            
+            if best_match and best_score >= min_score_threshold:
+                logger.debug(f"✅ 找到最佳匹配 - 章节: {best_match['section_path']}")
+                logger.debug(f"    综合得分: {best_match['score']:.3f}, 关键词交集: {best_match['keywords_intersection']}")
+                return best_match
+            else:
+                logger.debug(f"❌ 未找到满足阈值({min_score_threshold})的匹配，最高得分: {best_score:.3f}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"❌ 大纲匹配过程发生错误: {e}")
+            import traceback
+            logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
             return None
+    
+    def _clean_text_for_matching(self, text: str) -> str:
+        """清理文本用于匹配"""
+        import re
+        # 移除markdown标记、特殊符号和多余空格
+        text = re.sub(r'[#*\-\[\](){}「」《》\'""]', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+    
+    def _extract_keywords(self, text: str) -> set:
+        """提取关键词（支持中文）"""
+        import re
+        # 提取中文词汇（2-4个字符）和英文单词
+        chinese_words = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
+        english_words = re.findall(r'[a-zA-Z]{2,}', text.lower())
+        
+        # 过滤常用词
+        stop_words = {
+            # 中文常用词
+            '的', '了', '在', '是', '和', '与', '或', '等', '及', '以', '为', '有', '无', '可', '能', '要', '用',
+            '这', '那', '对', '中', '不', '也', '就', '都', '而', '然', '但', '因', '所', '会', '到', '说', '很',
+            '其', '如', '由', '时', '上', '下', '内', '外', '前', '后', '左', '右', '大', '小', '多', '少',
+            # 英文常用词
+            'the', 'of', 'and', 'in', 'to', 'for', 'with', 'on', 'at', 'by', 'from', 'is', 'are', 'was', 'were',
+            'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may',
+            'might', 'must', 'can', 'this', 'that', 'these', 'those', 'a', 'an', 'or', 'but', 'if', 'then'
+        }
+        
+        # 合并关键词并过滤
+        keywords = set()
+        for word in chinese_words + english_words:
+            if word.lower() not in stop_words and len(word) >= 2:
+                keywords.add(word.lower())
+        
+        return keywords
+    
+    def _calculate_match_score(self, chunk_text: str, outline_text: str, chunk_keywords: set, outline_keywords: set) -> float:
+        """计算匹配得分"""
+        import re
+        scores = []
+        
+        # 1. 关键词重叠得分
+        if chunk_keywords and outline_keywords:
+            intersection = chunk_keywords & outline_keywords
+            union = chunk_keywords | outline_keywords
+            jaccard_score = len(intersection) / len(union) if union else 0
+            scores.append(jaccard_score * 0.4)  # 权重0.4
+        
+        # 2. 文本包含关系得分
+        contains_score = 0
+        outline_lower = outline_text.lower()
+        chunk_lower = chunk_text.lower()
+        
+        # 检查大纲关键词在内容中的出现情况
+        outline_important_words = [word for word in outline_keywords if len(word) >= 2]
+        if outline_important_words:
+            found_words = sum(1 for word in outline_important_words if word in chunk_lower)
+            contains_score = found_words / len(outline_important_words)
+            scores.append(contains_score * 0.3)  # 权重0.3
+        
+        # 3. 长度相似性得分（避免极端长度差异）
+        len_chunk = len(chunk_text)
+        len_outline = len(outline_text)
+        if len_chunk > 0 and len_outline > 0:
+            len_ratio = min(len_chunk, len_outline) / max(len_chunk, len_outline)
+            # 对于大纲通常较短，调整长度相似性计算
+            if len_outline < len_chunk * 0.1:  # 大纲很短
+                length_score = 0.5  # 给一个中等分数
+            else:
+                length_score = len_ratio
+            scores.append(length_score * 0.2)  # 权重0.2
+        
+        # 4. 特殊匹配：医学术语和数字标识
+        special_score = 0
+        # 查找医学相关术语
+        medical_terms = re.findall(r'[\u4e00-\u9fff]{2,}(?:症|病|治|疗|方|药|汤|散|丸|膏)', chunk_text + outline_text)
+        if medical_terms:
+            special_score = 0.1  # 医学文档额外加分
+        
+        # 查找章节标识
+        if re.search(r'[一二三四五六七八九十\d]+[、．.]', outline_text):
+            special_score += 0.1  # 章节标识加分
+        
+        scores.append(special_score * 0.1)  # 权重0.1
+        
+        # 综合得分
+        final_score = sum(scores)
+        return final_score
     
     def _recursive_chunk_content(self, content: str, title: str, file_id: int) -> List[Document]:
         """递归分块内容（兼容模式）"""
-        chunks = self.content_splitter.split_text(content)
-        content_docs = []
+        import time
+        start_time = time.time()
         
-        for i, chunk in enumerate(chunks):
-            doc = Document(
-                page_content=chunk,
-                metadata={
-                    "file_id": file_id,
-                    "chunk_type": "content",
-                    "chunk_level": 3,
-                    "chunk_index": i,
-                    "title": title,
-                    "chunk_hash": hashlib.sha256(chunk.encode()).hexdigest(),
-                    "parent_heading": None,
-                    "section_path": f"内容块-{i+1}"
-                }
-            )
-            content_docs.append(doc)
-        
-        return content_docs
+        try:
+            logger.info(f"🔄 开始递归分块内容 - 文件ID: {file_id}, 标题: {title}")
+            logger.info(f"📄 内容长度: {len(content)} 字符")
+            
+            # 验证输入参数
+            if not content or not content.strip():
+                logger.error("❌ 内容为空，无法进行递归分块")
+                return []
+            
+            # 进行分块
+            logger.info("🔪 开始使用递归字符分割器进行分块...")
+            logger.info(f"📋 分割器配置: chunk_size={self.content_splitter.chunk_size}, overlap={self.content_splitter.chunk_overlap}")
+            
+            try:
+                chunks = self.content_splitter.split_text(content)
+                logger.info(f"✅ 递归分块完成，共生成 {len(chunks)} 个内容块")
+                
+                # 验证分块结果
+                if not chunks:
+                    logger.error("❌ 递归分块结果为空")
+                    return []
+                
+                # 统计分块信息
+                total_chars = sum(len(chunk) for chunk in chunks)
+                avg_length = total_chars / len(chunks) if chunks else 0
+                min_length = min(len(chunk) for chunk in chunks) if chunks else 0
+                max_length = max(len(chunk) for chunk in chunks) if chunks else 0
+                
+                logger.info(f"📊 递归分块统计:")
+                logger.info(f"  📏 总字符数: {total_chars}")
+                logger.info(f"  📊 平均长度: {avg_length:.0f} 字符")
+                logger.info(f"  📉 最小长度: {min_length} 字符")
+                logger.info(f"  📈 最大长度: {max_length} 字符")
+                logger.info(f"  🔢 分块数量: {len(chunks)}")
+                
+            except Exception as e:
+                logger.error(f"❌ 递归分块过程失败: {e}")
+                import traceback
+                logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+                return []
+            
+            # 创建文档对象
+            logger.info("🏗️ 开始创建递归分块文档...")
+            content_docs = []
+            
+            for i, chunk in enumerate(chunks):
+                try:
+                    # 验证内容块
+                    if not chunk or not chunk.strip():
+                        logger.warning(f"⚠️ 第 {i+1} 个内容块为空，跳过")
+                        continue
+                    
+                    # 创建文档
+                    doc = Document(
+                        page_content=chunk,
+                        metadata={
+                            "file_id": file_id,
+                            "chunk_type": "content",
+                            "chunk_level": 3,
+                            "chunk_index": i,
+                            "title": title,
+                            "chunk_hash": hashlib.sha256(chunk.encode()).hexdigest(),
+                            "parent_heading": None,
+                            "section_path": f"内容块-{i+1}",
+                            "vector_model": "recursive_fallback"
+                        }
+                    )
+                    content_docs.append(doc)
+                    
+                    # 每20个块输出一次进度
+                    if (i + 1) % 20 == 0:
+                        logger.info(f"📈 递归分块进度: {i+1}/{len(chunks)} 个内容块已处理")
+                    
+                except Exception as e:
+                    logger.error(f"❌ 创建第 {i+1} 个递归分块文档时发生错误: {e}")
+                    import traceback
+                    logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+                    continue
+            
+            # 最终统计
+            processing_time = time.time() - start_time
+            logger.info(f"📊 递归分块最终统计:")
+            logger.info(f"  ✅ 成功创建: {len(content_docs)} 个内容文档")
+            logger.info(f"  ⏱️ 处理时间: {processing_time:.2f} 秒")
+            logger.info(f"  📊 成功率: {len(content_docs)/len(chunks)*100:.1f}%")
+            
+            # 验证最终结果
+            if not content_docs:
+                logger.error("❌ 递归分块最终结果为空")
+                return []
+            
+            logger.info(f"🎉 递归分块完成，生成 {len(content_docs)} 个内容块")
+            return content_docs
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            logger.error(f"❌ 递归分块过程失败 (耗时: {processing_time:.2f}s): {e}")
+            import traceback
+            logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+            return []
     
     def _fallback_to_simple_chunking(self, content: str, title: str, file_id: int) -> Dict[str, List[Document]]:
         """降级到简单分块（保持兼容性）"""
-        logger.warning("LLM不可用，降级到简单分块模式")
+        import time
+        start_time = time.time()
         
-        # 至少创建一个简单的摘要块
-        simple_summary = f"标题：{title}\n内容预览：{content[:500]}..."
-        summary_doc = Document(
-            page_content=simple_summary,
-            metadata={
-                "file_id": file_id,
-                "chunk_type": "summary",
-                "chunk_level": 1,
-                "chunk_index": 0,
-                "title": title,
-                "chunk_hash": hashlib.sha256(simple_summary.encode()).hexdigest(),
-                "parent_heading": None,
-                "section_path": "简单摘要",
-                "generation_method": "fallback"
+        try:
+            logger.warning("⚠️ 开始降级到简单分块模式")
+            logger.warning(f"📄 文件ID: {file_id}, 标题: {title}")
+            logger.warning(f"📏 内容长度: {len(content)} 字符")
+            
+            # 验证输入参数
+            if not content or not content.strip():
+                logger.error("❌ 内容为空，无法进行简单分块")
+                return {
+                    'summary': [],
+                    'outline': [],
+                    'content': []
+                }
+            
+            # 创建简单摘要块
+            logger.info("📝 开始创建简单摘要块...")
+            try:
+                preview_length = min(500, len(content))
+                simple_summary = f"标题：{title}\n内容预览：{content[:preview_length]}..."
+                
+                if len(content) <= preview_length:
+                    simple_summary = f"标题：{title}\n完整内容：{content}"
+                
+                summary_doc = Document(
+                    page_content=simple_summary,
+                    metadata={
+                        "file_id": file_id,
+                        "chunk_type": "summary",
+                        "chunk_level": 1,
+                        "chunk_index": 0,
+                        "title": title,
+                        "chunk_hash": hashlib.sha256(simple_summary.encode()).hexdigest(),
+                        "parent_heading": None,
+                        "section_path": "简单摘要",
+                        "generation_method": "fallback",
+                        "vector_model": "simple_fallback"
+                    }
+                )
+                
+                logger.info(f"✅ 简单摘要块创建成功，长度: {len(simple_summary)} 字符")
+                
+            except Exception as e:
+                logger.error(f"❌ 创建简单摘要块失败: {e}")
+                import traceback
+                logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+                summary_doc = None
+            
+            # 创建内容块
+            logger.info("🔄 开始创建内容块...")
+            try:
+                content_docs = self._recursive_chunk_content(content, title, file_id)
+                logger.info(f"✅ 内容块创建完成，共 {len(content_docs)} 个")
+                
+            except Exception as e:
+                logger.error(f"❌ 创建内容块失败: {e}")
+                import traceback
+                logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+                content_docs = []
+            
+            # 组装结果
+            result = {
+                'summary': [summary_doc] if summary_doc else [],
+                'outline': [],  # 简单分块模式不提供大纲
+                'content': content_docs
             }
-        )
-        
-        content_docs = self._recursive_chunk_content(content, title, file_id)
-        
-        return {
-            'summary': [summary_doc],
-            'outline': [],
-            'content': content_docs
-        }
+            
+            # 统计结果
+            processing_time = time.time() - start_time
+            total_docs = len(result['summary']) + len(result['outline']) + len(result['content'])
+            
+            logger.info(f"📊 简单分块最终统计:")
+            logger.info(f"  📝 摘要块: {len(result['summary'])} 个")
+            logger.info(f"  📋 大纲块: {len(result['outline'])} 个")
+            logger.info(f"  📄 内容块: {len(result['content'])} 个")
+            logger.info(f"  📊 总文档数: {total_docs} 个")
+            logger.info(f"  ⏱️ 处理时间: {processing_time:.2f} 秒")
+            
+            # 验证最终结果
+            if total_docs == 0:
+                logger.error("❌ 简单分块最终结果为空")
+                return {
+                    'summary': [],
+                    'outline': [],
+                    'content': []
+                }
+            
+            logger.info(f"🎉 简单分块完成，总共生成 {total_docs} 个文档")
+            return result
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            logger.error(f"❌ 简单分块过程失败 (耗时: {processing_time:.2f}s): {e}")
+            import traceback
+            logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+            
+            # 返回空结果
+            return {
+                'summary': [],
+                'outline': [],
+                'content': []
+            }
 
 # 向后兼容的类名别名
 HierarchicalTextSplitter = IntelligentHierarchicalSplitter 

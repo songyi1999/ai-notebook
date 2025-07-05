@@ -332,7 +332,6 @@ class MCPClientService:
                             tool_name=tool_def["name"],
                             tool_description=tool_def.get("description", ""),
                             input_schema=tool_def.get("inputSchema", {}),
-                            annotations=tool_def.get("annotations", {}),
                             created_at=datetime.utcnow()
                         )
                         self.db.add(tool)
@@ -829,4 +828,53 @@ class MCPClientService:
             return True
         except Exception as e:
             logger.error(f"SSE MCP Server连接失败: {e}")
-            return False 
+            return False
+
+def validate_mcp_tool(tool_data: dict) -> tuple[bool, str]:
+    """
+    验证MCP工具数据的有效性
+    
+    Args:
+        tool_data: 工具数据字典
+        
+    Returns:
+        tuple[bool, str]: (是否有效, 错误信息)
+    """
+    required_fields = ['server_id', 'tool_name']
+    optional_fields = ['tool_description', 'input_schema', 'output_schema', 
+                      'tool_config', 'is_available', 'usage_count', 'last_used_at']
+    
+    # 检查必填字段
+    for field in required_fields:
+        if field not in tool_data:
+            return False, f"缺少必填字段: {field}"
+            
+    # 检查字段类型
+    if not isinstance(tool_data.get('server_id'), int):
+        return False, "server_id必须是整数"
+    if not isinstance(tool_data.get('tool_name'), str):
+        return False, "tool_name必须是字符串"
+        
+    # 检查是否有未定义的字段
+    all_allowed_fields = required_fields + optional_fields
+    unknown_fields = [f for f in tool_data.keys() if f not in all_allowed_fields]
+    if unknown_fields:
+        return False, f"发现未定义的字段: {', '.join(unknown_fields)}"
+        
+    # 检查schema格式
+    if 'input_schema' in tool_data and not isinstance(tool_data['input_schema'], dict):
+        return False, "input_schema必须是JSON对象"
+    if 'output_schema' in tool_data and not isinstance(tool_data['output_schema'], dict):
+        return False, "output_schema必须是JSON对象"
+        
+    return True, "验证通过"
+
+# 在register_tool函数中添加验证
+def register_tool(self, tool_data: dict) -> MCPTool:
+    """注册新的MCP工具"""
+    # 首先验证工具数据
+    is_valid, error_msg = validate_mcp_tool(tool_data)
+    if not is_valid:
+        raise ValueError(f"工具数据验证失败: {error_msg}")
+        
+    # ... 原有的注册逻辑 ... 

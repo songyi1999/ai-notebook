@@ -13,6 +13,9 @@ data/
 notes/
 .env
 
+# 但保留示例文件
+!env.example
+
 # Node.js
 node_modules/
 npm-debug.log*
@@ -54,6 +57,11 @@ Thumbs.db
 
 # Docker
 .dockerignore
+
+# Docker配置文件（保留示例文件）
+docker-compose.yml
+# 但不忽略示例文件
+!docker-compose.yml.example
 
 # Logs
 logs
@@ -109,4 +117,3 @@ jspm_packages/
 # DynamoDB Local files
 .dynamodb/ 
 .cursor/
-docker-compose.yml

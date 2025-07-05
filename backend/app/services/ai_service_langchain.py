@@ -232,7 +232,22 @@ class AIService:
             time.sleep(0.1)
             
             # 3. 使用智能多层次分块（每个文件都有汇总提纲）
+            logger.info(f"🧠 开始调用智能多层次分块器 - 文件: {file.file_path}")
             documents = self._create_hierarchical_chunks(file, progress_callback)
+            logger.info(f"✅ 智能多层次分块完成，共返回 {len(documents)} 个文档")
+            
+            # 验证分块结果
+            if not documents:
+                logger.error(f"❌ 智能分块返回空结果，文件: {file.file_path}")
+                return False
+            
+            # 统计分块结果
+            doc_types = {}
+            for doc in documents:
+                chunk_type = doc.metadata.get('chunk_type', 'unknown')
+                doc_types[chunk_type] = doc_types.get(chunk_type, 0) + 1
+            
+            logger.info(f"📊 分块结果统计: {doc_types}")
             
             # 4. 批量添加到向量存储
             if documents:
@@ -300,47 +315,135 @@ class AIService:
     
     def _create_hierarchical_chunks(self, file: File, progress_callback=None) -> List[Document]:
         """创建智能多层次分块（基于LLM）"""
+        import time
+        start_time = time.time()
+        
         try:
             from .hierarchical_splitter import IntelligentHierarchicalSplitter
+            
+            logger.info(f"🧠 开始创建智能多层次分块 - 文件: {file.title}")
+            logger.info(f"📄 文件信息: ID={file.id}, 路径={file.file_path}")
+            logger.info(f"📏 内容长度: {len(file.content)} 字符")
             
             if progress_callback:
                 progress_callback("分析中", f"正在分析文件结构和内容")
             
+            # 验证文件内容
+            if not file.content or not file.content.strip():
+                logger.error(f"❌ 文件内容为空: {file.file_path}")
+                return []
+            
             # 创建智能分块器，传入LLM实例
+            logger.info("🔧 正在初始化智能分块器...")
             splitter = IntelligentHierarchicalSplitter(llm=self.llm)
+            
+            logger.info("⚙️ 开始调用智能分块器进行文档分析...")
             hierarchical_docs = splitter.split_document(file.content, file.title, file.id, progress_callback)
+            
+            # 验证分块器返回结果
+            if not hierarchical_docs:
+                logger.error("❌ 智能分块器返回空结果")
+                if progress_callback:
+                    progress_callback("降级处理", f"智能分块失败，使用基本分块策略")
+                return self._create_basic_fallback_chunks(file, progress_callback)
+            
+            logger.info(f"✅ 智能分块器完成，返回结构: {list(hierarchical_docs.keys())}")
+            
+            # 统计各层级文档数量
+            summary_count = len(hierarchical_docs.get('summary', []))
+            outline_count = len(hierarchical_docs.get('outline', []))
+            content_count = len(hierarchical_docs.get('content', []))
+            
+            logger.info(f"📊 分块器结果统计:")
+            logger.info(f"  📝 摘要层: {summary_count} 个文档")
+            logger.info(f"  📋 大纲层: {outline_count} 个文档")
+            logger.info(f"  📄 内容层: {content_count} 个文档")
             
             all_documents = []
             
             # 处理摘要层
             if progress_callback:
                 progress_callback("摘要生成", f"正在处理文件摘要")
-            for doc in hierarchical_docs.get('summary', []):
-                all_documents.append(doc)
-                self._save_embedding_metadata(doc, file.id)
+            
+            logger.info("🏗️ 开始处理摘要层文档...")
+            for i, doc in enumerate(hierarchical_docs.get('summary', [])):
+                try:
+                    all_documents.append(doc)
+                    self._save_embedding_metadata(doc, file.id)
+                    logger.debug(f"  ✅ 摘要文档 {i+1} 处理完成")
+                except Exception as e:
+                    logger.error(f"  ❌ 处理摘要文档 {i+1} 失败: {e}")
+            
+            logger.info(f"✅ 摘要层处理完成，成功处理 {len(hierarchical_docs.get('summary', []))} 个文档")
             
             # 处理大纲层
             if progress_callback:
                 progress_callback("大纲提取", f"正在处理文件大纲")
-            for doc in hierarchical_docs.get('outline', []):
-                all_documents.append(doc)
-                self._save_embedding_metadata(doc, file.id)
+            
+            logger.info("🏗️ 开始处理大纲层文档...")
+            for i, doc in enumerate(hierarchical_docs.get('outline', [])):
+                try:
+                    all_documents.append(doc)
+                    self._save_embedding_metadata(doc, file.id)
+                    logger.debug(f"  ✅ 大纲文档 {i+1} 处理完成")
+                except Exception as e:
+                    logger.error(f"  ❌ 处理大纲文档 {i+1} 失败: {e}")
+            
+            logger.info(f"✅ 大纲层处理完成，成功处理 {len(hierarchical_docs.get('outline', []))} 个文档")
             
             # 处理内容层
             if progress_callback:
                 progress_callback("内容分块", f"正在处理内容分块")
-            for doc in hierarchical_docs.get('content', []):
-                all_documents.append(doc)
-                self._save_embedding_metadata(doc, file.id)
             
-            logger.info(f"智能多层次分块完成: 总共 {len(all_documents)} 个文档")
+            logger.info("🏗️ 开始处理内容层文档...")
+            content_docs = hierarchical_docs.get('content', [])
+            processed_content = 0
+            
+            for i, doc in enumerate(content_docs):
+                try:
+                    all_documents.append(doc)
+                    self._save_embedding_metadata(doc, file.id)
+                    processed_content += 1
+                    
+                    # 每50个文档输出一次进度
+                    if (i + 1) % 50 == 0:
+                        logger.info(f"  📈 内容层进度: {i+1}/{len(content_docs)} 个文档已处理")
+                        
+                except Exception as e:
+                    logger.error(f"  ❌ 处理内容文档 {i+1} 失败: {e}")
+            
+            logger.info(f"✅ 内容层处理完成，成功处理 {processed_content}/{len(content_docs)} 个文档")
+            
+            # 最终统计
+            processing_time = time.time() - start_time
+            logger.info(f"📊 智能多层次分块最终统计:")
+            logger.info(f"  ✅ 总文档数: {len(all_documents)} 个")
+            logger.info(f"  📝 摘要文档: {summary_count} 个")
+            logger.info(f"  📋 大纲文档: {outline_count} 个")
+            logger.info(f"  📄 内容文档: {processed_content} 个")
+            logger.info(f"  ⏱️ 处理时间: {processing_time:.2f} 秒")
+            
+            # 验证最终结果
+            if not all_documents:
+                logger.error("❌ 智能多层次分块最终结果为空")
+                if progress_callback:
+                    progress_callback("降级处理", f"智能分块失败，使用基本分块策略")
+                return self._create_basic_fallback_chunks(file, progress_callback)
+            
+            logger.info(f"🎉 智能多层次分块完成: 总共 {len(all_documents)} 个文档")
             return all_documents
             
         except Exception as e:
-            logger.error(f"创建智能多层次分块失败: {e}")
+            processing_time = time.time() - start_time
+            logger.error(f"❌ 创建智能多层次分块失败 (耗时: {processing_time:.2f}s): {e}")
+            import traceback
+            logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
+            
             # 创建最基本的摘要和内容块（降级策略）
             if progress_callback:
                 progress_callback("降级处理", f"智能分块失败，使用基本分块策略")
+            
+            logger.info("🔄 降级到基本分块策略...")
             return self._create_basic_fallback_chunks(file, progress_callback)
     
     def _create_basic_fallback_chunks(self, file: File, progress_callback=None) -> List[Document]:
@@ -409,17 +512,21 @@ class AIService:
     def _save_embedding_metadata(self, doc: Document, file_id: int):
         """保存嵌入元数据到SQLite"""
         try:
+            # 获取vector_model，如果不存在则设置默认值
+            vector_model = doc.metadata.get('vector_model', 'unknown')
+            
             # 创建嵌入记录
             embedding = Embedding(
                 file_id=file_id,
                 chunk_index=doc.metadata['chunk_index'],
+                chunk_text=doc.page_content,  # 添加缺少的chunk_text字段
                 chunk_hash=doc.metadata['chunk_hash'],
-                vector_model=doc.metadata['vector_model'],
+                vector_model=vector_model,
                 chunk_type=doc.metadata.get('chunk_type', 'content'),
                 chunk_level=doc.metadata.get('chunk_level', 1),
                 parent_heading=doc.metadata.get('parent_heading'),
-                section_path=doc.metadata.get('section_path'),
-                generation_method=doc.metadata.get('generation_method', 'hierarchical')
+                section_path=doc.metadata.get('section_path')
+                # 移除了不存在的generation_method字段
             )
             self.db.add(embedding)
             # 不在这里提交，让上层统一提交

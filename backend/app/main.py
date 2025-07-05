@@ -45,6 +45,10 @@ async def startup_event():
                 db = next(get_db())
                 task_service = TaskProcessorService(db)
                 
+                # 应用启动时清理过期的锁文件
+                logger.info("🧹 应用启动，清理过期的锁文件...")
+                task_service._cleanup_stale_lock_on_startup()
+                
                 logger.info("开始处理后台索引任务...")
                 task_service.process_all_pending_tasks()
                 logger.info("后台索引任务处理完成")

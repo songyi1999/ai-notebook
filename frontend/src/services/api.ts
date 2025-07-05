@@ -223,8 +223,9 @@ export interface SystemStatus {
 export interface ProcessorStatus {
     running: boolean;
     pid?: number;
-    status: string;
+    status: string; // 'running' | 'idle' | 'error'
     message: string;
+    pending_tasks?: number;
 }
 
 // 文件上传转换相关接口

@@ -647,8 +647,8 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     // 初始加载
     loadSystemStatus();
     
-    // 每60秒更新一次系统状态（从30秒改为60秒，减少请求频率）
-    const statusInterval = setInterval(loadSystemStatus, 60000);
+    // 每30分钟更新一次系统状态（30 * 60 * 1000 = 1800000毫秒）
+    const statusInterval = setInterval(loadSystemStatus, 1800000);
     
     return () => {
       clearInterval(statusInterval);
@@ -956,18 +956,33 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                   display: 'flex', 
                   alignItems: 'center', 
                   gap: '4px',
-                  color: processorStatus.running ? '#52c41a' : '#ff4d4f'
+                  color: processorStatus.status === 'running' ? '#52c41a' : 
+                        processorStatus.status === 'idle' ? '#1890ff' : '#ff4d4f'
                 }}>
                   <span style={{ fontSize: '10px' }}>
-                    {processorStatus.running ? '●' : '○'}
+                    {processorStatus.status === 'running' ? '●' : '○'}
                   </span>
-                  处理器: {processorStatus.running ? '运行中' : '已停止'}
+                  处理器: {
+                    processorStatus.status === 'running' ? '运行中' :
+                    processorStatus.status === 'idle' ? '空闲中' :
+                    processorStatus.status === 'error' ? '错误' :
+                    '已停止'
+                  }
+                  {processorStatus.pending_tasks !== undefined && processorStatus.pending_tasks > 0 && (
+                    <span style={{ 
+                      fontSize: '10px', 
+                      color: '#fa8c16',
+                      marginLeft: '4px'
+                    }}>
+                      ({processorStatus.pending_tasks}个任务)
+                    </span>
+                  )}
                 </span>
               )}
               {/* 控制按钮 */}
               {processorStatus && (
                 <Space size="small">
-                  {!processorStatus.running && (
+                  {processorStatus.status !== 'running' && (
                     <Button
                       size="small"
                       type="text"
@@ -979,7 +994,7 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                       启动
                     </Button>
                   )}
-                  {processorStatus.running && (
+                  {processorStatus.status === 'running' && (
                     <Button
                       size="small"
                       type="text"
@@ -992,7 +1007,7 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                       停止
                     </Button>
                   )}
-                  {systemStatus.pending_tasks > 0 && !processorStatus.running && (
+                  {systemStatus.pending_tasks > 0 && processorStatus.status !== 'running' && (
                     <Button
                       size="small"
                       type="primary"

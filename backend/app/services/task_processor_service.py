@@ -30,6 +30,36 @@ class TaskProcessorService:
         self.lock_file = Path("data/task_processor.lock")
         self.is_running = False
         
+        # 不在初始化时自动清理锁文件，避免误清理正在运行的任务处理器
+    
+    def _cleanup_stale_lock_on_startup(self):
+        """
+        容器启动时清理过期的锁文件
+        
+        在Docker容器中，上次运行的锁文件可能会因为卷挂载而持久化，
+        但锁文件中的PID在新容器中可能被其他进程占用，导致误判。
+        因此在启动时应该清理过期的锁文件。
+        """
+        try:
+            if self.lock_file.exists():
+                # 读取锁文件中的PID
+                try:
+                    lock_pid = int(self.lock_file.read_text().strip())
+                    
+                    # 在Docker容器启动场景下，任何现有的锁文件都应该被清理
+                    # 因为真正的任务处理器进程不会在容器启动时就存在
+                    logger.info(f"容器启动时发现过期锁文件(PID: {lock_pid})，清理中...")
+                    self.lock_file.unlink()
+                    logger.info("过期锁文件已清理")
+                    
+                except (ValueError, IOError) as e:
+                    logger.warning(f"锁文件格式错误，清理中: {e}")
+                    self.lock_file.unlink()
+                    logger.info("格式错误的锁文件已清理")
+                    
+        except Exception as e:
+            logger.error(f"清理启动锁文件失败: {e}")
+        
     def _acquire_lock(self) -> bool:
         """获取处理锁，防止重复执行"""
         try:
@@ -60,8 +90,62 @@ class TaskProcessorService:
             logger.error(f"获取任务处理锁失败: {e}")
             return False
     
+    def _is_task_processor_running(self, pid: int) -> bool:
+        """
+        检查指定PID是否是正在运行的任务处理器进程
+        
+        改进的检查逻辑：
+        1. 检查进程是否存在
+        2. 检查进程是否是Python进程
+        3. 检查进程命令行是否包含任务处理器相关信息
+        """
+        try:
+            import psutil
+            
+            # 检查进程是否存在
+            if not psutil.pid_exists(pid):
+                return False
+            
+            # 获取进程信息
+            try:
+                process = psutil.Process(pid)
+                
+                # 检查是否是Python进程
+                if 'python' not in process.name().lower():
+                    logger.debug(f"PID {pid} 不是Python进程: {process.name()}")
+                    return False
+                
+                # 检查命令行参数，看是否包含任务处理器相关信息
+                cmdline = ' '.join(process.cmdline())
+                if 'task_processor' in cmdline.lower() or 'TaskProcessorService' in cmdline:
+                    logger.debug(f"PID {pid} 确实是任务处理器进程")
+                    return True
+                else:
+                    logger.debug(f"PID {pid} 是Python进程但不是任务处理器: {cmdline}")
+                    return False
+                    
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return False
+                
+        except ImportError:
+            # 如果没有psutil，使用保守的检查方式
+            try:
+                import signal
+                # 发送0信号检查进程是否存在
+                os.kill(pid, 0)
+                # 在没有psutil的情况下，假设进程存在但不确定是否是任务处理器
+                # 为了避免误判，返回False，让锁文件被清理
+                logger.debug(f"无法确定PID {pid} 是否是任务处理器，清理锁文件")
+                return False
+            except (OSError, ProcessLookupError):
+                return False
+        except Exception as e:
+            # 如果检查失败，为了安全起见清理锁文件
+            logger.debug(f"检查任务处理器进程失败: {e}，清理锁文件")
+            return False
+    
     def _is_process_running(self, pid: int) -> bool:
-        """检查进程是否正在运行"""
+        """检查进程是否正在运行（保留原方法以兼容其他地方的调用）"""
         try:
             import psutil
             return psutil.pid_exists(pid)
@@ -181,18 +265,16 @@ class TaskProcessorService:
             
             logger.info(f"开始处理任务: {task.id}, file_path={task.file_path}, task_type={task.task_type}")
             
-            # 获取文件信息
-            file = self.db.query(File).filter(File.id == task.file_id).first()
-            if not file:
-                raise Exception(f"文件不存在: file_id={task.file_id}")
-            
             success = False
             
             if task.task_type == "vector_index":
-                # 处理向量索引任务（兼容旧任务）
+                # 处理向量索引任务（兼容旧任务）- 需要先查找文件
+                file = self.db.query(File).filter(File.id == task.file_id).first()
+                if not file:
+                    raise Exception(f"文件不存在: file_id={task.file_id}")
                 success = self._process_vector_index_task(file)
             elif task.task_type == "file_import":
-                # 处理文件导入任务（统一原子操作：入库+向量化）
+                # 处理文件导入任务（统一原子操作：入库+向量化）- 不需要预先查找文件
                 success = self._process_file_import_task(task)
             else:
                 raise Exception(f"未知任务类型: {task.task_type}")
@@ -284,7 +366,14 @@ class TaskProcessorService:
             logger.info(f"📋 开始处理文件导入任务: {task.file_path} (待处理任务: {pending_count})")
             
             # 1. 读取文件内容
-            file_path = Path("./notes") / task.file_path
+            # 智能处理路径：如果task.file_path已包含notes前缀则直接使用，否则添加
+            if task.file_path.startswith("notes/") or task.file_path.startswith("./notes/"):
+                # 已包含完整路径，直接使用
+                file_path = Path(task.file_path)
+            else:
+                # 相对路径，需要添加notes前缀
+                file_path = Path("./notes") / task.file_path
+            
             if not file_path.exists():
                 raise Exception(f"文件不存在: {file_path}")
             
@@ -297,15 +386,20 @@ class TaskProcessorService:
             content_hash = hashlib.sha256(content.encode()).hexdigest()
             
             # 3. 检查是否已存在相同的文件记录
+            # 确保查询时使用标准化的路径格式
+            normalized_path = task.file_path
+            if not normalized_path.startswith("notes/"):
+                normalized_path = f"notes/{normalized_path}"
+            
             existing_file = self.db.query(File).filter(
-                File.file_path == task.file_path,
+                File.file_path == normalized_path,
                 File.is_deleted == False
             ).first()
             
             if existing_file:
                 # 如果文件已存在，检查内容是否有变化
                 if existing_file.content_hash == content_hash:
-                    logger.info(f"✅ 文件内容未变化，跳过导入: {task.file_path}")
+                    logger.info(f"✅ 文件内容未变化，跳过导入: {normalized_path}")
                     return True
                 else:
                     # 内容有变化，更新记录
@@ -314,12 +408,18 @@ class TaskProcessorService:
                     existing_file.file_size = len(content.encode('utf-8'))
                     existing_file.updated_at = datetime.now()
                     db_file = existing_file
-                    logger.info(f"🔄 更新现有文件记录: {task.file_path}")
+                    logger.info(f"🔄 更新现有文件记录: {normalized_path}")
             else:
                 # 创建新的文件记录
                 title = Path(task.file_path).stem
+                
+                # 确保数据库中存储的路径格式一致（始终包含notes前缀）
+                normalized_path = task.file_path
+                if not normalized_path.startswith("notes/"):
+                    normalized_path = f"notes/{normalized_path}"
+                
                 db_file = File(
-                    file_path=task.file_path,
+                    file_path=normalized_path,
                     title=title,
                     content=content,
                     content_hash=content_hash,
@@ -327,40 +427,47 @@ class TaskProcessorService:
                     is_deleted=False
                 )
                 self.db.add(db_file)
-                logger.info(f"📝 创建新文件记录: {task.file_path}")
+                logger.info(f"📝 创建新文件记录: {normalized_path}")
             
             # 4. 提交数据库事务
             self.db.commit()
             self.db.refresh(db_file)
-            logger.info(f"💾 数据库记录保存成功: {task.file_path}")
+            logger.info(f"💾 数据库记录保存成功: {normalized_path}")
             
             # 5. 开始智能多层次向量分块
             ai_service = AIService(self.db)
             if ai_service.is_available():
-                logger.info(f"🤖 开始智能多层次向量分块: {task.file_path}")
+                logger.info(f"🤖 开始智能多层次向量分块: {normalized_path}")
                 
                 # 调用智能分块，并传递进度回调
                 vector_success = ai_service.create_embeddings(
                     db_file, 
                     progress_callback=lambda step, message: self._log_chunking_progress(
-                        task.file_path, step, message
+                        normalized_path, step, message
                     )
                 )
                 
                 if vector_success:
                     # 获取最新的任务队列状态
                     remaining_count = self._get_pending_tasks_count()
-                    logger.info(f"🎉 文件处理完全成功: {task.file_path} | 剩余任务: {remaining_count}")
+                    logger.info(f"🎉 文件处理完全成功: {normalized_path} | 剩余任务: {remaining_count}")
                 else:
-                    logger.error(f"❌ 向量索引创建失败: {task.file_path}")
+                    logger.error(f"❌ 向量索引创建失败: {normalized_path}")
                     return False
             else:
-                logger.warning(f"⚠️ AI服务不可用，跳过向量索引: {task.file_path}")
+                logger.warning(f"⚠️ AI服务不可用，跳过向量索引: {normalized_path}")
             
             return True
             
         except Exception as e:
-            logger.error(f"💥 文件导入任务失败: {task.file_path}, 错误: {e}")
+            # 尝试获取标准化路径用于错误日志
+            try:
+                normalized_path = task.file_path
+                if not normalized_path.startswith("notes/"):
+                    normalized_path = f"notes/{normalized_path}"
+                logger.error(f"💥 文件导入任务失败: {normalized_path}, 错误: {e}")
+            except:
+                logger.error(f"💥 文件导入任务失败: {task.file_path}, 错误: {e}")
             self.db.rollback()
             return False
     
@@ -577,47 +684,65 @@ class TaskProcessorService:
     def get_processor_status(self) -> Dict[str, Any]:
         """获取任务处理器运行状态"""
         try:
+            # 检查是否有待处理任务
+            pending_count = self._get_pending_tasks_count()
+            
             # 检查锁文件
             if not self.lock_file.exists():
-                return {
-                    "running": False,
-                    "pid": None,
-                    "status": "stopped",
-                    "message": "任务处理器未运行"
-                }
+                if pending_count > 0:
+                    return {
+                        "running": False,
+                        "pid": None,
+                        "status": "idle",
+                        "message": f"任务处理器空闲中，有 {pending_count} 个待处理任务",
+                        "pending_tasks": pending_count
+                    }
+                else:
+                    return {
+                        "running": False,
+                        "pid": None,
+                        "status": "idle",
+                        "message": "任务处理器空闲中，暂无待处理任务",
+                        "pending_tasks": 0
+                    }
             
             # 读取锁文件中的PID
             try:
                 with open(self.lock_file, 'r') as f:
                     pid_str = f.read().strip()
                     if not pid_str:
-                        # 空锁文件，清理并返回停止状态
+                        # 空锁文件，清理并返回空闲状态
                         self.lock_file.unlink()
                         return {
                             "running": False,
                             "pid": None,
-                            "status": "stopped",
-                            "message": "锁文件损坏，已清理"
+                            "status": "idle",
+                            "message": "锁文件损坏已清理，任务处理器空闲中",
+                            "pending_tasks": pending_count
                         }
                     
                     pid = int(pid_str)
                     
                     # 检查进程是否真的在运行
                     if self._is_process_running(pid):
+                        # 进程还在运行，假设是任务处理器（保守策略）
                         return {
                             "running": True,
                             "pid": pid,
                             "status": "running",
-                            "message": f"任务处理器正在运行 (PID: {pid})"
+                            "message": f"任务处理器正在运行 (PID: {pid})",
+                            "pending_tasks": pending_count
                         }
                     else:
-                        # 进程已死，清理锁文件
+                        # 进程确实已死，安全清理锁文件
+                        logger.info(f"检测到死锁文件(PID: {pid}已退出)，清理锁文件")
                         self.lock_file.unlink()
                         return {
                             "running": False,
                             "pid": None,
-                            "status": "stopped",
-                            "message": "任务处理器进程已停止，已清理死锁文件"
+                            "status": "idle",
+                            "message": "任务处理器进程已停止，现在空闲中",
+                            "pending_tasks": pending_count
                         }
                         
             except (ValueError, OSError) as e:
@@ -631,7 +756,8 @@ class TaskProcessorService:
                     "running": False,
                     "pid": None,
                     "status": "error",
-                    "message": f"锁文件读取失败: {e}"
+                    "message": f"锁文件读取失败: {e}",
+                    "pending_tasks": pending_count
                 }
                 
         except Exception as e:
@@ -640,7 +766,8 @@ class TaskProcessorService:
                 "running": False,
                 "pid": None,
                 "status": "error",
-                "message": f"状态检查失败: {e}"
+                "message": f"状态检查失败: {e}",
+                "pending_tasks": 0
             }
     
     def start_processor(self, force: bool = False) -> Dict[str, Any]:
@@ -658,6 +785,7 @@ class TaskProcessorService:
             
             # 如果force=True，先清理可能的死锁
             if force:
+                logger.info("🧹 强制启动，清理可能的死锁文件")
                 self._release_lock()
             
             # 启动处理器
