@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Button, Input, Space, message, Tabs, Typography, Spin, Divider, Modal } from 'antd';
-import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined, ToolOutlined, LinkOutlined, FileSearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { Button, Input, Space, message, Tabs, Typography, Spin, Modal } from 'antd';
+import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined, ToolOutlined, LinkOutlined, FileSearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
-import { apiClient, SystemStatus, ProcessorStatus, search, getProcessorStatus, startProcessor, stopProcessor, generateSummary, generateOutline, getFileSummary, getFileOutline } from '../services/api';
+import { apiClient, search, generateSummary, generateOutline, getFileSummary, getFileOutline } from '../services/api';
 import TagManager from './TagManager';
 import AutoProcessor from './AutoProcessor';
 import LinkGraph from './LinkGraph';
@@ -153,9 +153,6 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   const [isModified, setIsModified] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   const [activeTab, setActiveTab] = useState('edit');
-  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
-  const [processorStatus, setProcessorStatus] = useState<ProcessorStatus | null>(null);
-  const [statusLoading, setStatusLoading] = useState(false);
   const [tagRefreshTrigger, setTagRefreshTrigger] = useState(0);
   const [summaryContent, setSummaryContent] = useState<string>('');
   const [outlineContent, setOutlineContent] = useState<string>('');
@@ -806,31 +803,6 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     return `${fileSize.toFixed(1)} ${units[unitIndex]}`;
   };
 
-  // 获取系统状态
-  const loadSystemStatus = useCallback(async () => {
-    try {
-      setStatusLoading(true);
-      
-      // 并行获取系统状态和任务处理器状态
-      const [systemStatusResult, processorStatusResult] = await Promise.allSettled([
-        apiClient.getSystemStatus(),
-        getProcessorStatus()
-      ]);
-      
-      if (systemStatusResult.status === 'fulfilled') {
-        setSystemStatus(systemStatusResult.value);
-      }
-      
-      if (processorStatusResult.status === 'fulfilled') {
-        setProcessorStatus(processorStatusResult.value);
-      }
-    } catch (error) {
-      console.error('获取系统状态失败:', error);
-      // 静默失败，不显示错误消息
-    } finally {
-      setStatusLoading(false);
-    }
-  }, []);
 
   // 标签变化回调
   const handleTagsChange = useCallback((tags: any[]) => {
@@ -838,62 +810,6 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     console.log('标签已更新:', tags);
   }, []);
 
-  // 启动任务处理器
-  const handleStartProcessor = useCallback(async (force: boolean = false) => {
-    try {
-      setStatusLoading(true);
-      const result = await startProcessor(force);
-      
-      if (result.success) {
-        message.success(result.message);
-        setProcessorStatus(result.data);
-      } else {
-        message.warning(result.message);
-      }
-    } catch (error) {
-      console.error('启动任务处理器失败:', error);
-      message.error(`启动任务处理器失败: ${error instanceof Error ? error.message : '未知错误'}`);
-    } finally {
-      setStatusLoading(false);
-      // 刷新状态
-      loadSystemStatus();
-    }
-  }, [loadSystemStatus]);
-
-  // 停止任务处理器
-  const handleStopProcessor = useCallback(async () => {
-    try {
-      setStatusLoading(true);
-      const result = await stopProcessor();
-      
-      if (result.success) {
-        message.success(result.message);
-        setProcessorStatus(result.data);
-      } else {
-        message.warning(result.message);
-      }
-    } catch (error) {
-      console.error('停止任务处理器失败:', error);
-      message.error(`停止任务处理器失败: ${error instanceof Error ? error.message : '未知错误'}`);
-    } finally {
-      setStatusLoading(false);
-      // 刷新状态
-      loadSystemStatus();
-    }
-  }, [loadSystemStatus]);
-
-  // 定期更新系统状态
-  useEffect(() => {
-    // 初始加载
-    loadSystemStatus();
-    
-    // 每30分钟更新一次系统状态（30 * 60 * 1000 = 1800000毫秒）
-    const statusInterval = setInterval(loadSystemStatus, 1800000);
-    
-    return () => {
-      clearInterval(statusInterval);
-    };
-  }, []); // 移除loadSystemStatus依赖，避免重新创建interval
 
   return (
     <div style={{ 
@@ -1181,7 +1097,7 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
         />
       </div>
 
-      {/* 底部文件信息栏 - 修改样式并添加系统状态 */}
+      {/* 底部文件信息栏 - 仅显示文件基本信息 */}
       <div style={{
         padding: '8px 16px',
         borderTop: '1px solid #d9d9d9',
@@ -1190,13 +1106,13 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
         color: '#333',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'flex-start',
         boxShadow: '0 -1px 2px rgba(0,0,0,0.1)',
         minHeight: '32px',
         flexShrink: 0,
         overflow: 'auto'
       }}>
-        {/* 左侧：文件信息 */}
+        {/* 文件信息 */}
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <Space split={<span style={{ color: '#d9d9d9' }}>|</span>} size="small">
             <span>字数: {getWordCount()}</span>
@@ -1209,109 +1125,6 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
               <span>修改: {formatTime(currentNote.updated_at)}</span>
             )}
           </Space>
-        </div>
-
-        {/* 右侧：系统状态 */}
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          {statusLoading ? (
-            <Spin indicator={<SyncOutlined spin />} size="small" />
-          ) : systemStatus ? (
-            <Space split={<Divider type="vertical" />} size="small">
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <FileTextOutlined style={{ color: '#1890ff' }} />
-                文件: {systemStatus.total_files}
-              </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <DatabaseOutlined style={{ color: '#52c41a' }} />
-                嵌入: {systemStatus.total_embeddings}
-                {systemStatus.vector_count_method === 'estimated' && (
-                  <Text type="secondary" style={{ fontSize: '10px' }}>~</Text>
-                )}
-              </span>
-              <span style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '4px',
-                color: systemStatus.pending_tasks > 0 ? '#fa8c16' : '#52c41a'
-              }}>
-                <ClockCircleOutlined />
-                待索引: {systemStatus.pending_tasks}
-              </span>
-              {/* 任务处理器状态 */}
-              {processorStatus && (
-                <span style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '4px',
-                  color: processorStatus.status === 'running' ? '#52c41a' : 
-                        processorStatus.status === 'idle' ? '#1890ff' : '#ff4d4f'
-                }}>
-                  <span style={{ fontSize: '10px' }}>
-                    {processorStatus.status === 'running' ? '●' : '○'}
-                  </span>
-                  处理器: {
-                    processorStatus.status === 'running' ? '运行中' :
-                    processorStatus.status === 'idle' ? '空闲中' :
-                    processorStatus.status === 'error' ? '错误' :
-                    '已停止'
-                  }
-                  {processorStatus.pending_tasks !== undefined && processorStatus.pending_tasks > 0 && (
-                    <span style={{ 
-                      fontSize: '10px', 
-                      color: '#fa8c16',
-                      marginLeft: '4px'
-                    }}>
-                      ({processorStatus.pending_tasks}个任务)
-                    </span>
-                  )}
-                </span>
-              )}
-              {/* 控制按钮 */}
-              {processorStatus && (
-                <Space size="small">
-                  {processorStatus.status !== 'running' && (
-                    <Button
-                      size="small"
-                      type="text"
-                      icon={<SyncOutlined />}
-                      onClick={() => handleStartProcessor(false)}
-                      style={{ padding: '0 4px', fontSize: '11px', height: '20px' }}
-                      title="启动任务处理器"
-                    >
-                      启动
-                    </Button>
-                  )}
-                  {processorStatus.status === 'running' && (
-                    <Button
-                      size="small"
-                      type="text"
-                      danger
-                      icon={<CloseCircleOutlined />}
-                      onClick={handleStopProcessor}
-                      style={{ padding: '0 4px', fontSize: '11px', height: '20px' }}
-                      title="停止任务处理器"
-                    >
-                      停止
-                    </Button>
-                  )}
-                  {systemStatus.pending_tasks > 0 && processorStatus.status !== 'running' && (
-                    <Button
-                      size="small"
-                      type="primary"
-                      icon={<DatabaseOutlined />}
-                      onClick={() => handleStartProcessor(true)}
-                      style={{ padding: '0 8px', fontSize: '11px', height: '20px' }}
-                      title="强制启动索引处理"
-                    >
-                      开始索引
-                    </Button>
-                  )}
-                </Space>
-              )}
-            </Space>
-          ) : (
-            <Text type="secondary" style={{ fontSize: '12px' }}>系统状态加载中...</Text>
-          )}
         </div>
       </div>
 

@@ -28,8 +28,15 @@ import {
   WarningOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  ExperimentOutlined
+  ExperimentOutlined,
+  DatabaseOutlined,
+  FileTextOutlined,
+  ClockCircleOutlined,
+  SyncOutlined,
+  DashboardOutlined
 } from '@ant-design/icons';
+
+import { apiClient, getProcessorStatus, startProcessor, stopProcessor, SystemStatus, ProcessorStatus } from '../services/api';
 
 const { TabPane } = Tabs;
 const { Text, Title, Paragraph } = Typography;
@@ -116,13 +123,19 @@ const ConfigManager: React.FC<ConfigManagerProps> = ({ visible, onClose }) => {
   const [testing, setTesting] = useState(false);
   const [presets, setPresets] = useState<Record<string, any>>({});
   const [activeTab, setActiveTab] = useState('ai');
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [processorStatus, setProcessorStatus] = useState<ProcessorStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
 
   useEffect(() => {
     if (visible) {
       loadConfig();
       loadPresets();
+      if (activeTab === 'status') {
+        loadSystemStatus();
+      }
     }
-  }, [visible]);
+  }, [visible, activeTab]);
 
   const loadConfig = async () => {
     try {
@@ -251,6 +264,76 @@ const ConfigManager: React.FC<ConfigManagerProps> = ({ visible, onClose }) => {
       message.error('重置失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 获取系统状态
+  const loadSystemStatus = async () => {
+    try {
+      setStatusLoading(true);
+      
+      // 并行获取系统状态和任务处理器状态
+      const [systemStatusResult, processorStatusResult] = await Promise.allSettled([
+        apiClient.getSystemStatus(),
+        getProcessorStatus()
+      ]);
+      
+      if (systemStatusResult.status === 'fulfilled') {
+        setSystemStatus(systemStatusResult.value);
+      }
+      
+      if (processorStatusResult.status === 'fulfilled') {
+        setProcessorStatus(processorStatusResult.value);
+      }
+    } catch (error) {
+      console.error('获取系统状态失败:', error);
+      // 静默失败，不显示错误消息
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
+  // 启动任务处理器
+  const handleStartProcessor = async (force: boolean = false) => {
+    try {
+      setStatusLoading(true);
+      const result = await startProcessor(force);
+      
+      if (result.success) {
+        message.success(result.message);
+        setProcessorStatus(result.data);
+      } else {
+        message.warning(result.message);
+      }
+    } catch (error) {
+      console.error('启动任务处理器失败:', error);
+      message.error(`启动任务处理器失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setStatusLoading(false);
+      // 刷新状态
+      loadSystemStatus();
+    }
+  };
+
+  // 停止任务处理器
+  const handleStopProcessor = async () => {
+    try {
+      setStatusLoading(true);
+      const result = await stopProcessor();
+      
+      if (result.success) {
+        message.success(result.message);
+        setProcessorStatus(result.data);
+      } else {
+        message.warning(result.message);
+      }
+    } catch (error) {
+      console.error('停止任务处理器失败:', error);
+      message.error(`停止任务处理器失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setStatusLoading(false);
+      // 刷新状态
+      loadSystemStatus();
     }
   };
 
@@ -663,6 +746,191 @@ const ConfigManager: React.FC<ConfigManagerProps> = ({ visible, onClose }) => {
     </Card>
   );
 
+  const renderSystemStatusTab = () => (
+    <Card>
+      <Title level={4}>
+        <DashboardOutlined /> 系统状态
+      </Title>
+      
+      <Space direction="vertical" style={{ width: '100%' }} size="large">
+        {/* 刷新按钮 */}
+        <div style={{ textAlign: 'right' }}>
+          <Button
+            type="primary"
+            icon={<ReloadOutlined />}
+            loading={statusLoading}
+            onClick={loadSystemStatus}
+          >
+            刷新状态
+          </Button>
+        </div>
+
+        {statusLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <Spin size="large" />
+            <div style={{ marginTop: '16px', color: '#666' }}>
+              正在获取系统状态...
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* 系统概览 */}
+            {systemStatus && (
+              <Card size="small" title="系统概览">
+                <Row gutter={16}>
+                  <Col span={6}>
+                    <div style={{ textAlign: 'center' }}>
+                      <FileTextOutlined style={{ fontSize: '24px', color: '#1890ff' }} />
+                      <div style={{ fontSize: '20px', fontWeight: 'bold', marginTop: '8px' }}>
+                        {systemStatus.total_files}
+                      </div>
+                      <div style={{ color: '#666' }}>总文件数</div>
+                    </div>
+                  </Col>
+                  <Col span={6}>
+                    <div style={{ textAlign: 'center' }}>
+                      <DatabaseOutlined style={{ fontSize: '24px', color: '#52c41a' }} />
+                      <div style={{ fontSize: '20px', fontWeight: 'bold', marginTop: '8px' }}>
+                        {systemStatus.total_embeddings}
+                        {systemStatus.vector_count_method === 'estimated' && (
+                          <Text type="secondary" style={{ fontSize: '12px', marginLeft: '4px' }}>~</Text>
+                        )}
+                      </div>
+                      <div style={{ color: '#666' }}>向量嵌入</div>
+                    </div>
+                  </Col>
+                  <Col span={6}>
+                    <div style={{ textAlign: 'center' }}>
+                      <ClockCircleOutlined 
+                        style={{ 
+                          fontSize: '24px', 
+                          color: systemStatus.pending_tasks > 0 ? '#fa8c16' : '#52c41a' 
+                        }} 
+                      />
+                      <div style={{ 
+                        fontSize: '20px', 
+                        fontWeight: 'bold', 
+                        marginTop: '8px',
+                        color: systemStatus.pending_tasks > 0 ? '#fa8c16' : '#52c41a'
+                      }}>
+                        {systemStatus.pending_tasks}
+                      </div>
+                      <div style={{ color: '#666' }}>待索引任务</div>
+                    </div>
+                  </Col>
+                  <Col span={6}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '24px' }}>
+                        {processorStatus?.status === 'running' ? 
+                          <span style={{ color: '#52c41a' }}>●</span> : 
+                          <span style={{ color: '#ff4d4f' }}>○</span>
+                        }
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: 'bold', marginTop: '8px' }}>
+                        {processorStatus?.status === 'running' ? '运行中' :
+                         processorStatus?.status === 'idle' ? '空闲中' :
+                         processorStatus?.status === 'error' ? '错误' : '已停止'}
+                      </div>
+                      <div style={{ color: '#666' }}>处理器状态</div>
+                    </div>
+                  </Col>
+                </Row>
+              </Card>
+            )}
+
+            {/* 处理器控制 */}
+            {processorStatus && (
+              <Card size="small" title="处理器控制">
+                <div style={{ marginBottom: '16px' }}>
+                  <Text strong>当前状态：</Text>
+                  <Tag color={
+                    processorStatus.status === 'running' ? 'green' :
+                    processorStatus.status === 'idle' ? 'blue' :
+                    processorStatus.status === 'error' ? 'red' : 'default'
+                  }>
+                    {processorStatus.status === 'running' ? '运行中' :
+                     processorStatus.status === 'idle' ? '空闲中' :
+                     processorStatus.status === 'error' ? '错误' : '已停止'}
+                  </Tag>
+                  {processorStatus.pending_tasks !== undefined && processorStatus.pending_tasks > 0 && (
+                    <span style={{ marginLeft: '8px', color: '#fa8c16' }}>
+                      （{processorStatus.pending_tasks} 个待处理任务）
+                    </span>
+                  )}
+                </div>
+                
+                <Space>
+                  {processorStatus.status !== 'running' && (
+                    <Button
+                      type="default"
+                      icon={<SyncOutlined />}
+                      onClick={() => handleStartProcessor(false)}
+                      loading={statusLoading}
+                    >
+                      启动处理器
+                    </Button>
+                  )}
+                  {processorStatus.status === 'running' && (
+                    <Button
+                      danger
+                      icon={<CloseCircleOutlined />}
+                      onClick={handleStopProcessor}
+                      loading={statusLoading}
+                    >
+                      停止处理器
+                    </Button>
+                  )}
+                  {systemStatus && systemStatus.pending_tasks > 0 && processorStatus.status !== 'running' && (
+                    <Button
+                      type="primary"
+                      icon={<DatabaseOutlined />}
+                      onClick={() => handleStartProcessor(true)}
+                      loading={statusLoading}
+                    >
+                      强制开始索引
+                    </Button>
+                  )}
+                </Space>
+              </Card>
+            )}
+
+            {/* 详细信息 */}
+            {systemStatus && (
+              <Card size="small" title="详细信息">
+                <Row gutter={16}>
+                  <Col span={12}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <Text strong>向量计数方法：</Text>
+                      <Tag color={systemStatus.vector_count_method === 'exact' ? 'green' : 'orange'}>
+                        {systemStatus.vector_count_method === 'exact' ? '精确计数' : '估算'}
+                      </Tag>
+                    </div>
+                    <div style={{ marginBottom: '8px' }}>
+                      <Text strong>数据库状态：</Text>
+                      <Tag color="green">正常</Tag>
+                    </div>
+                  </Col>
+                  <Col span={12}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <Text strong>系统版本：</Text>
+                      <span style={{ marginLeft: '8px' }}>AI笔记本 v1.0</span>
+                    </div>
+                    <div style={{ marginBottom: '8px' }}>
+                      <Text strong>最后更新：</Text>
+                      <span style={{ marginLeft: '8px' }}>
+                        {new Date().toLocaleString('zh-CN')}
+                      </span>
+                    </div>
+                  </Col>
+                </Row>
+              </Card>
+            )}
+          </>
+        )}
+      </Space>
+    </Card>
+  );
+
   return (
     <Modal
       title={
@@ -744,6 +1012,18 @@ const ConfigManager: React.FC<ConfigManagerProps> = ({ visible, onClose }) => {
               key="advanced"
             >
               {renderAdvancedTab()}
+            </TabPane>
+            
+            <TabPane 
+              tab={
+                <Space>
+                  <DashboardOutlined />
+                  系统状态
+                </Space>
+              } 
+              key="status"
+            >
+              {renderSystemStatusTab()}
             </TabPane>
           </Tabs>
         </Form>

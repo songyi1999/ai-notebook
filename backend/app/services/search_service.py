@@ -117,7 +117,7 @@ class SearchService:
             return []
     
     def _semantic_search(self, query: str, limit: int, similarity_threshold: float) -> List[Dict[str, Any]]:
-        """语义搜索 - 返回前N个最相关的文件"""
+        """语义搜索 - 返回前N个最相关的文件，并自动获取完整上下文"""
         try:
             if not self.ai_service.is_available():
                 logger.warning("AI服务不可用，无法进行语义搜索")
@@ -127,10 +127,10 @@ class SearchService:
                 query, limit, similarity_threshold
             )
             
-            # 转换为统一格式
+            # 转换为统一格式并增强上下文
             results = []
             for result in semantic_results:
-                results.append({
+                enhanced_result = {
                     "file_id": result["file_id"],
                     "file_path": result["file_path"],
                     "title": result["title"],
@@ -140,7 +140,18 @@ class SearchService:
                     "chunk_index": result["chunk_index"],
                     "created_at": result["created_at"],
                     "updated_at": result["updated_at"]
-                })
+                }
+                
+                # 增强知识检索：获取完整文档的总结和提纲
+                logger.info(f"🔍 正在获取文件 {result['file_id']} 的增强上下文...")
+                enhanced_context = self._get_enhanced_context(result["file_id"], result.get("chunk_text", ""))
+                if enhanced_context:
+                    enhanced_result["enhanced_context"] = enhanced_context
+                    logger.info(f"✅ 获取到增强上下文 - 类型: {enhanced_context.get('chunk_type')}, 策略: {enhanced_context.get('enhancement_strategy')}")
+                else:
+                    logger.warning(f"⚠️ 文件 {result['file_id']} 未能获取增强上下文")
+                
+                results.append(enhanced_result)
             
             return results
         except Exception as e:
@@ -148,7 +159,7 @@ class SearchService:
             return []
     
     def _mixed_search(self, query: str, limit: int, similarity_threshold: float) -> List[Dict[str, Any]]:
-        """混合搜索 - 结合关键词和语义搜索结果"""
+        """混合搜索 - 结合关键词和语义搜索结果，包含增强上下文"""
         try:
             # 关键词搜索 - 获取所有匹配
             keyword_results = self._keyword_search(query, limit)
@@ -214,6 +225,55 @@ class SearchService:
             "updated_at": safe_datetime_to_iso(file.updated_at),
             "tags": []  # 标签信息现在通过file_tags关联表获取
         }
+    
+    def _get_enhanced_context(self, file_id: int, chunk_text: str) -> Optional[Dict[str, Any]]:
+        """获取增强的上下文信息 - 包括文档总结和提纲"""
+        try:
+            if not self.ai_service.is_available():
+                return None
+            
+            # 获取文档的总结和提纲
+            summary_and_outline = self.ai_service.get_document_summary_and_outline(file_id)
+            
+            if not summary_and_outline:
+                return None
+            
+            # 根据检索到的内容类型决定返回策略
+            chunk_type = self._detect_chunk_type(chunk_text)
+            
+            enhanced_context = {
+                "chunk_type": chunk_type,
+                "document_summary": summary_and_outline.get("summary", ""),
+                "document_outline": summary_and_outline.get("outline", []),
+                "enhancement_strategy": self._get_enhancement_strategy(chunk_type)
+            }
+            
+            return enhanced_context
+            
+        except Exception as e:
+            logger.error(f"获取增强上下文失败: {e}")
+            return None
+    
+    def _detect_chunk_type(self, chunk_text: str) -> str:
+        """检测文本块类型"""
+        # 简单的启发式检测
+        if len(chunk_text) < 100:
+            return "outline"
+        elif "总结" in chunk_text or "摘要" in chunk_text:
+            return "summary"
+        else:
+            return "content"
+    
+    def _get_enhancement_strategy(self, chunk_type: str) -> str:
+        """根据块类型返回增强策略"""
+        if chunk_type == "content":
+            return "提供完整文档的总结和提纲以丰富上下文"
+        elif chunk_type == "summary":
+            return "提供完整文档的提纲以补充结构信息"
+        elif chunk_type == "outline":
+            return "提供完整文档的总结以补充内容概述"
+        else:
+            return "提供完整文档的总结和提纲"
     
     def _record_search_history(
         self, 

@@ -14,6 +14,7 @@ import FileTree from './components/FileTree';
 import ResizableSider from './components/ResizableSider';
 import SearchModal from './components/SearchModal';
 import ChatModal from './components/ChatModal';
+import EnhancedChatModal from './components/EnhancedChatModal';
 import ConfigManager from './components/ConfigManager';
 import './App.css';
 
@@ -29,6 +30,7 @@ const MainLayout: React.FC = () => {
   } | null>(null);
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [chatModalVisible, setChatModalVisible] = useState(false);
+  const [enhancedChatModalVisible, setEnhancedChatModalVisible] = useState(false);
   const [configModalVisible, setConfigModalVisible] = useState(false);
   
 
@@ -51,6 +53,14 @@ const MainLayout: React.FC = () => {
 
   const handleChatModalClose = () => {
     setChatModalVisible(false);
+  };
+
+  const handleEnhancedChatModalOpen = () => {
+    setEnhancedChatModalVisible(true);
+  };
+
+  const handleEnhancedChatModalClose = () => {
+    setEnhancedChatModalVisible(false);
   };
 
   const handleConfigModalOpen = () => {
@@ -83,12 +93,19 @@ const MainLayout: React.FC = () => {
         event.preventDefault();
         handleChatModalOpen();
       }
+      // Ctrl+Shift+/ 打开增强AI助手
+      if (event.ctrlKey && event.shiftKey && event.key === '?') {
+        event.preventDefault();
+        handleEnhancedChatModalOpen();
+      }
       // ESC 关闭搜索或聊天
       if (event.key === 'Escape') {
         if (searchModalVisible) {
           handleSearchModalClose();
         } else if (chatModalVisible) {
           handleChatModalClose();
+        } else if (enhancedChatModalVisible) {
+          handleEnhancedChatModalClose();
         } else if (configModalVisible) {
           handleConfigModalClose();
         }
@@ -109,7 +126,7 @@ const MainLayout: React.FC = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [searchModalVisible, chatModalVisible, configModalVisible]);
+  }, [searchModalVisible, chatModalVisible, enhancedChatModalVisible, configModalVisible]);
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
@@ -147,6 +164,16 @@ const MainLayout: React.FC = () => {
               style={{ borderRadius: '6px' }}
             >
               询问
+            </Button>
+          </Tooltip>
+          <Tooltip title="增强AI助手 (Ctrl+Shift+/)">
+            <Button 
+              type="default" 
+              icon={<RobotOutlined />} 
+              onClick={handleEnhancedChatModalOpen}
+              style={{ borderRadius: '6px', background: 'linear-gradient(45deg, #1890ff, #722ed1)' }}
+            >
+              <span style={{ color: 'white' }}>增强</span>
             </Button>
           </Tooltip>
           <Tooltip title="智能搜索 (Ctrl+K)">
@@ -232,6 +259,13 @@ const MainLayout: React.FC = () => {
       <ChatModal
         visible={chatModalVisible}
         onClose={handleChatModalClose}
+        onSelectFile={handleFileSelect}
+      />
+
+      {/* 增强AI聊天模态窗口 */}
+      <EnhancedChatModal
+        open={enhancedChatModalVisible}
+        onClose={handleEnhancedChatModalClose}
         onSelectFile={handleFileSelect}
       />
 

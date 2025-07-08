@@ -699,6 +699,22 @@ class AIService:
             outline_results = self._search_by_chunk_type(query, "outline", limit//3, similarity_threshold)
             content_results = self._search_by_chunk_type(query, "content", limit, similarity_threshold)
             
+            # 记录每层级的详细匹配内容
+            logger.info(f"📝 摘要层匹配结果 ({len(summary_results)} 个):")
+            for i, result in enumerate(summary_results, 1):
+                logger.info(f"   {i}. 文件: {result.get('title', 'Unknown')} (相似度: {result.get('similarity', 0):.3f})")
+                logger.info(f"      摘要内容: {result.get('chunk_text', '')[:200]}...")
+            
+            logger.info(f"📋 大纲层匹配结果 ({len(outline_results)} 个):")
+            for i, result in enumerate(outline_results, 1):
+                logger.info(f"   {i}. 文件: {result.get('title', 'Unknown')} (相似度: {result.get('similarity', 0):.3f})")
+                logger.info(f"      大纲内容: {result.get('chunk_text', '')[:200]}...")
+            
+            logger.info(f"📄 内容层匹配结果 ({len(content_results)} 个):")
+            for i, result in enumerate(content_results, 1):
+                logger.info(f"   {i}. 文件: {result.get('title', 'Unknown')} (相似度: {result.get('similarity', 0):.3f})")
+                logger.info(f"      内容片段: {result.get('chunk_text', '')[:200]}...")
+            
             # 智能上下文扩展
             expanded_results = []
             
@@ -722,6 +738,16 @@ class AIService:
             # 去重并限制结果数量
             final_results = self._deduplicate_and_rank(expanded_results, limit)
             
+            # 记录最终构建的上下文
+            logger.info(f"🔧 最终构建的搜索上下文:")
+            total_context_length = 0
+            for i, result in enumerate(final_results, 1):
+                chunk_text = result.get('chunk_text', '')
+                total_context_length += len(chunk_text)
+                logger.info(f"   {i}. [{result.get('chunk_type', 'content')}] {result.get('title', 'Unknown')} - {len(chunk_text)} 字符")
+                logger.info(f"      预览: {chunk_text[:150]}..." if len(chunk_text) > 150 else f"      内容: {chunk_text}")
+            
+            logger.info(f"📊 上下文统计: 总长度={total_context_length} 字符, 片段数={len(final_results)}")
             logger.info(f"多层次搜索完成: 摘要={len(summary_results)}, 大纲={len(outline_results)}, 内容={len(content_results)}, 最终={len(final_results)}")
             return final_results
             
@@ -733,14 +759,26 @@ class AIService:
     def _search_by_chunk_type(self, query: str, chunk_type: str, limit: int, similarity_threshold: float) -> List[Dict[str, Any]]:
         """按分块类型搜索"""
         try:
+            logger.info(f"🔍 开始按类型搜索: {chunk_type}, 查询: '{query}', 阈值: {similarity_threshold}")
+            
             search_results = self.vector_store.similarity_search_with_score(
                 query=query,
                 k=limit * 2,
                 filter={"chunk_type": chunk_type}
             )
             
+            logger.info(f"📊 向量数据库返回 {len(search_results)} 个 {chunk_type} 类型的原始结果")
+            
             results = []
-            for doc, score in search_results:
+            filtered_count = 0
+            
+            for i, (doc, score) in enumerate(search_results, 1):
+                distance = score
+                similarity = 1 - distance
+                
+                logger.info(f"   原始结果 {i}: 距离={distance:.4f}, 相似度={similarity:.4f}, 文件={doc.metadata.get('title', 'Unknown')}")
+                logger.info(f"     内容预览: {doc.page_content[:100]}...")
+                
                 if score <= similarity_threshold:
                     file_id = doc.metadata.get('file_id')
                     if file_id:
@@ -760,13 +798,22 @@ class AIService:
                                 'chunk_level': doc.metadata.get('chunk_level', 3),
                                 'parent_heading': doc.metadata.get('parent_heading'),
                                 'section_path': doc.metadata.get('section_path'),
-                                'similarity': float(1 - score),
+                                'similarity': float(similarity),
                                 'created_at': file.created_at.isoformat() if file.created_at else None,
                                 'updated_at': file.updated_at.isoformat() if file.updated_at else None,
                             }
                             results.append(result_item)
+                            logger.info(f"     ✅ 通过阈值筛选，加入结果列表")
+                        else:
+                            logger.info(f"     ❌ 文件不存在或已删除: file_id={file_id}")
+                else:
+                    filtered_count += 1
+                    logger.info(f"     ❌ 未通过阈值筛选 (距离 {distance:.4f} > {similarity_threshold})")
             
-            return results[:limit]
+            final_results = results[:limit]
+            logger.info(f"🎯 {chunk_type} 搜索完成: 原始={len(search_results)}, 过滤={filtered_count}, 通过={len(results)}, 最终={len(final_results)}")
+            
+            return final_results
             
         except Exception as e:
             logger.error(f"按类型搜索失败 ({chunk_type}): {e}")
@@ -1575,6 +1622,11 @@ class AIService:
         memory_context = ""
         try:
             memory_context = self.memory_service.format_memories_for_prompt(limit=8)
+            if memory_context.strip():
+                logger.info(f"🧠 记忆服务提供背景信息: {len(memory_context)} 字符")
+                logger.info(f"🧠 记忆内容预览: {memory_context[:200]}...")
+            else:
+                logger.info("🧠 记忆服务: 未找到相关记忆")
         except Exception as e:
             logger.warning(f"获取用户记忆失败: {e}")
         
@@ -1758,13 +1810,17 @@ class AIService:
     def _build_context_from_results(self, search_results: List[Dict[str, Any]], max_length: int = 3000) -> str:
         """从搜索结果构建上下文字符串"""
         if not search_results:
+            logger.info("🔧 构建上下文: 无搜索结果，返回空上下文")
             return ""
+        
+        logger.info(f"🔧 开始构建上下文: {len(search_results)} 个搜索结果, 最大长度: {max_length}")
         
         context_parts = []
         current_length = 0
+        included_count = 0
         
-        for result in search_results:
-            content = result.get('content', '')
+        for i, result in enumerate(search_results, 1):
+            content = result.get('chunk_text', result.get('content', ''))
             file_path = result.get('file_path', 'Unknown')
             chunk_type = result.get('chunk_type', 'content')
             
@@ -1778,12 +1834,21 @@ class AIService:
             
             # 检查长度限制
             if current_length + len(formatted_content) > max_length:
+                logger.info(f"   片段 {i}: 长度超限 ({current_length + len(formatted_content)} > {max_length}), 停止添加")
                 break
                 
             context_parts.append(formatted_content)
             current_length += len(formatted_content)
+            included_count += 1
+            
+            logger.info(f"   片段 {i}: [{chunk_type}] {file_path} - {len(formatted_content)} 字符 (累计: {current_length})")
+            logger.info(f"     内容: {content[:100]}..." if len(content) > 100 else f"     内容: {content}")
         
-        return "\n".join(context_parts)
+        final_context = "\n".join(context_parts)
+        logger.info(f"🎯 上下文构建完成: 包含 {included_count}/{len(search_results)} 个片段, 总长度: {len(final_context)} 字符")
+        logger.info(f"📄 最终上下文预览:\n{final_context[:300]}..." if len(final_context) > 300 else f"📄 最终上下文:\n{final_context}")
+        
+        return final_context
 
     def create_memory_from_chat(self, content: str, memory_type: str = "fact", 
                               category: str = "personal", importance_score: float = 0.5) -> bool:
@@ -1920,3 +1985,63 @@ class AIService:
         except Exception as e:
             logger.error(f"Streaming chat failed: {e}")
             yield {"error": str(e)}
+    
+    def get_document_summary_and_outline(self, file_id: int) -> Optional[Dict[str, Any]]:
+        """获取文档的总结和提纲"""
+        try:
+            # 从数据库获取文件信息
+            file = self.db.query(File).filter(
+                File.id == file_id,
+                File.is_deleted == False
+            ).first()
+            
+            if not file:
+                logger.warning(f"文件不存在或已删除: file_id={file_id}")
+                return None
+            
+            # 检查是否启用层次化分块
+            if settings.enable_hierarchical_chunking:
+                # 尝试从嵌入数据中获取摘要和提纲
+                embeddings = self.db.query(Embedding).filter(
+                    Embedding.file_id == file_id
+                ).all()
+                
+                summary = None
+                outline = []
+                
+                for embedding in embeddings:
+                    if embedding.chunk_type == "summary":
+                        summary = embedding.chunk_text
+                    elif embedding.chunk_type == "outline":
+                        outline.append(embedding.chunk_text)
+                
+                if summary and outline:
+                    return {
+                        "summary": summary,
+                        "outline": outline,
+                        "source": "cached"
+                    }
+            
+            # 如果没有缓存的摘要和提纲，动态生成
+            if not self.is_available():
+                logger.warning("AI服务不可用，无法生成文档摘要和提纲")
+                return None
+            
+            # 生成摘要
+            summary = self.generate_summary(file.content, max_length=300)
+            
+            # 生成提纲
+            outline_items = self.generate_outline(file.content, max_items=8)
+            
+            if summary and outline_items:
+                return {
+                    "summary": summary,
+                    "outline": outline_items,
+                    "source": "generated"
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"获取文档摘要和提纲失败: {e}")
+            return None

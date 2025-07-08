@@ -291,7 +291,12 @@ class SimpleMemoryService:
         memories = self.get_memories_for_context(limit)
         
         if not memories:
+            logger.debug("🧠 format_memories_for_prompt: 没有记忆信息")
             return ""
+        
+        logger.info(f"🧠 格式化 {len(memories)} 条记忆用于提示词")
+        for i, memory in enumerate(memories, 1):
+            logger.info(f"   {i}. {memory.get('content', '')[:50]}...")
         
         memory_text = "=== 用户记忆信息 ===\n"
         
