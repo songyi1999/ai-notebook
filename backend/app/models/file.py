@@ -1,6 +1,7 @@
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from .base import Base
 
 class File(Base):
@@ -17,3 +18,6 @@ class File(Base):
     is_deleted = Column(Boolean, default=False, index=True)
     parent_folder = Column(String, index=True)
     file_metadata = Column(JSON) 
+    
+    # 关联关系
+    # Note: Memory relationships removed (using simple JSON file-based memory system now) 

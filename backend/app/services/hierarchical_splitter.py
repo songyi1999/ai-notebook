@@ -45,7 +45,7 @@ class IntelligentHierarchicalSplitter:
             length_function=len,
         )
     
-    def split_document(self, content: str, title: str, file_id: int, progress_callback=None) -> Dict[str, List[Document]]:
+    def split_document(self, content: str, title: str, file_id: int, file_path: str, progress_callback=None) -> Dict[str, List[Document]]:
         """
         智能多层次文档分块
         
@@ -53,6 +53,7 @@ class IntelligentHierarchicalSplitter:
             content: 文档内容
             title: 文档标题
             file_id: 文件ID
+            file_path: 文件路径
             progress_callback: 进度回调函数
             
         Returns:
@@ -65,7 +66,7 @@ class IntelligentHierarchicalSplitter:
                 logger.warning("LLM不可用，降级到简单分块")
                 if progress_callback:
                     progress_callback("降级处理", "LLM不可用，使用简单分块")
-                return self._fallback_to_simple_chunking(content, title, file_id)
+                return self._fallback_to_simple_chunking(content, title, file_id, file_path)
             
             # 判断是否需要分而治之策略
             needs_divide_conquer = len(content) > self.llm_context_window * 0.8  # 预留20%空间给prompt
@@ -75,28 +76,28 @@ class IntelligentHierarchicalSplitter:
                 
                 if progress_callback:
                     progress_callback("摘要生成", "使用分而治之策略生成摘要")
-                summary_docs = self._create_summary_with_divide_conquer(content, title, file_id, progress_callback)
+                summary_docs = self._create_summary_with_divide_conquer(content, title, file_id, file_path, progress_callback)
                 
                 if progress_callback:
                     progress_callback("大纲提取", "使用分而治之策略提取大纲")
-                outline_docs = self._create_outline_with_divide_conquer(content, title, file_id, progress_callback)
+                outline_docs = self._create_outline_with_divide_conquer(content, title, file_id, file_path, progress_callback)
             else:
                 logger.info(f"文档长度 {len(content)} 适中，直接使用LLM分析")
                 
                 if progress_callback:
                     progress_callback("摘要生成", "直接使用LLM生成摘要")
-                summary_docs = self._create_summary_direct(content, title, file_id, progress_callback)
+                summary_docs = self._create_summary_direct(content, title, file_id, file_path, progress_callback)
                 
                 if progress_callback:
                     progress_callback("大纲提取", "直接使用LLM提取大纲")
-                outline_docs = self._create_outline_direct(content, title, file_id, progress_callback)
+                outline_docs = self._create_outline_direct(content, title, file_id, file_path, progress_callback)
             
             # Level 3: 基于大纲的智能内容分块
             if progress_callback:
                 progress_callback("智能分块", "基于大纲进行智能内容分块")
             
             logger.info("🧠 开始第三层：基于大纲的智能内容分块")
-            content_docs = self._create_intelligent_content_layer(content, title, file_id, outline_docs, progress_callback)
+            content_docs = self._create_intelligent_content_layer(content, title, file_id, file_path, outline_docs, progress_callback)
             logger.info(f"✅ 第三层完成，内容层生成: {len(content_docs)} 个文档")
             
             # 组装最终结果
@@ -133,9 +134,9 @@ class IntelligentHierarchicalSplitter:
             # 降级到简单分块
             if progress_callback:
                 progress_callback("错误降级", f"智能分块失败: {str(e)}")
-            return self._fallback_to_simple_chunking(content, title, file_id)
+            return self._fallback_to_simple_chunking(content, title, file_id, file_path)
     
-    def _create_summary_direct(self, content: str, title: str, file_id: int, progress_callback=None) -> List[Document]:
+    def _create_summary_direct(self, content: str, title: str, file_id: int, file_path: str, progress_callback=None) -> List[Document]:
         """直接使用LLM生成摘要（文档长度适中时）"""
         try:
             prompt = f"""请为以下文档生成一个高质量的摘要，要求：
@@ -157,9 +158,10 @@ class IntelligentHierarchicalSplitter:
                 page_content=summary,
                 metadata={
                     "file_id": file_id,
+                    "file_path": file_path,
                     "chunk_type": "summary",
                     "chunk_level": 1,
-                    "chunk_index": 0,
+                    "chunk_index": -1,
                     "title": title,
                     "chunk_hash": hashlib.sha256(summary.encode()).hexdigest(),
                     "parent_heading": None,
@@ -179,7 +181,7 @@ class IntelligentHierarchicalSplitter:
             logger.error(f"LLM直接生成摘要失败: {e}")
             return []
     
-    def _create_summary_with_divide_conquer(self, content: str, title: str, file_id: int, progress_callback=None) -> List[Document]:
+    def _create_summary_with_divide_conquer(self, content: str, title: str, file_id: int, file_path: str, progress_callback=None) -> List[Document]:
         """使用分而治之策略生成摘要（超长文档）"""
         try:
             logger.info("开始分而治之摘要生成")
@@ -190,7 +192,7 @@ class IntelligentHierarchicalSplitter:
             
             if len(chunks) == 1:
                 # 如果只有一个块，直接处理
-                return self._create_summary_direct(content, title, file_id, progress_callback)
+                return self._create_summary_direct(content, title, file_id, file_path, progress_callback)
             
             # 2. 使用Refine策略迭代生成摘要
             current_summary = None
@@ -235,9 +237,10 @@ class IntelligentHierarchicalSplitter:
                     page_content=current_summary,
                     metadata={
                         "file_id": file_id,
+                        "file_path": file_path,
                         "chunk_type": "summary",
                         "chunk_level": 1,
-                        "chunk_index": 0,
+                        "chunk_index": -1,
                         "title": title,
                         "chunk_hash": hashlib.sha256(current_summary.encode()).hexdigest(),
                         "parent_heading": None,
@@ -257,7 +260,7 @@ class IntelligentHierarchicalSplitter:
             logger.error(f"分而治之摘要生成失败: {e}")
             return []
     
-    def _create_outline_direct(self, content: str, title: str, file_id: int, progress_callback=None) -> List[Document]:
+    def _create_outline_direct(self, content: str, title: str, file_id: int, file_path: str, progress_callback=None) -> List[Document]:
         """直接使用LLM提取大纲（文档长度适中时）"""
         try:
             prompt = f"""请为以下文档提取详细的大纲结构，要求：
@@ -284,7 +287,7 @@ class IntelligentHierarchicalSplitter:
             outline_text = response.content.strip()
             
             # 解析大纲为独立的文档
-            outline_docs = self._parse_outline_to_documents(outline_text, title, file_id)
+            outline_docs = self._parse_outline_to_documents(outline_text, title, file_id, file_path)
             
             if progress_callback:
                 progress_callback("大纲完成", f"大纲提取成功，生成 {len(outline_docs)} 个大纲项目")
@@ -296,7 +299,7 @@ class IntelligentHierarchicalSplitter:
             logger.error(f"LLM直接提取大纲失败: {e}")
             return []
     
-    def _create_outline_with_divide_conquer(self, content: str, title: str, file_id: int, progress_callback=None) -> List[Document]:
+    def _create_outline_with_divide_conquer(self, content: str, title: str, file_id: int, file_path: str, progress_callback=None) -> List[Document]:
         """使用分而治之策略提取大纲（超长文档）"""
         try:
             logger.info("开始分而治之大纲提取")
@@ -306,7 +309,7 @@ class IntelligentHierarchicalSplitter:
             logger.info(f"文档分为 {len(chunks)} 个块进行大纲提取")
             
             if len(chunks) == 1:
-                return self._create_outline_direct(content, title, file_id, progress_callback)
+                return self._create_outline_direct(content, title, file_id, file_path, progress_callback)
             
             # 2. 使用Refine策略迭代构建大纲
             current_outline = None
@@ -348,7 +351,7 @@ class IntelligentHierarchicalSplitter:
             
             if current_outline:
                 # 解析最终大纲为文档
-                outline_docs = self._parse_outline_to_documents(current_outline, title, file_id, generation_method="divide_conquer_refine")
+                outline_docs = self._parse_outline_to_documents(current_outline, title, file_id, file_path, generation_method="divide_conquer_refine")
                 
                 if progress_callback:
                     progress_callback("大纲完成", f"分而治之大纲提取成功，生成 {len(outline_docs)} 个大纲项目")
@@ -362,13 +365,14 @@ class IntelligentHierarchicalSplitter:
             logger.error(f"分而治之大纲提取失败: {e}")
             return []
     
-    def _parse_outline_to_documents(self, outline_text: str, title: str, file_id: int, generation_method: str = "direct_llm") -> List[Document]:
+    def _parse_outline_to_documents(self, outline_text: str, title: str, file_id: int, file_path: str, generation_method: str = "direct_llm") -> List[Document]:
         """将大纲文本解析为独立的文档"""
         try:
             lines = outline_text.split('\n')
             outline_docs = []
             current_level_1 = None
             
+            base_offset = 1000  # 使大纲索引为负且不与摘要冲突
             for i, line in enumerate(lines):
                 line = line.strip()
                 if not line:
@@ -381,9 +385,10 @@ class IntelligentHierarchicalSplitter:
                         page_content=line,
                         metadata={
                             "file_id": file_id,
+                            "file_path": file_path,
                             "chunk_type": "outline",
                             "chunk_level": 2,
-                            "chunk_index": i,
+                            "chunk_index": -(base_offset + i),
                             "title": title,
                             "chunk_hash": hashlib.sha256(line.encode()).hexdigest(),
                             "parent_heading": None,
@@ -400,9 +405,10 @@ class IntelligentHierarchicalSplitter:
                         page_content=line,
                         metadata={
                             "file_id": file_id,
+                            "file_path": file_path,
                             "chunk_type": "outline",
                             "chunk_level": 2,
-                            "chunk_index": i,
+                            "chunk_index": -(base_offset + i),
                             "title": title,
                             "chunk_hash": hashlib.sha256(line.encode()).hexdigest(),
                             "parent_heading": current_level_1,
@@ -419,9 +425,10 @@ class IntelligentHierarchicalSplitter:
                         page_content=line,
                         metadata={
                             "file_id": file_id,
+                            "file_path": file_path,
                             "chunk_type": "outline",
                             "chunk_level": 2,
-                            "chunk_index": i,
+                            "chunk_index": -(base_offset + i),
                             "title": title,
                             "chunk_hash": hashlib.sha256(line.encode()).hexdigest(),
                             "parent_heading": current_level_1,
@@ -439,7 +446,7 @@ class IntelligentHierarchicalSplitter:
             logger.error(f"解析大纲失败: {e}")
             return []
     
-    def _create_intelligent_content_layer(self, content: str, title: str, file_id: int, outline_docs: List[Document], progress_callback=None) -> List[Document]:
+    def _create_intelligent_content_layer(self, content: str, title: str, file_id: int, file_path: str, outline_docs: List[Document], progress_callback=None) -> List[Document]:
         """创建智能内容层（基于大纲的语义分块）"""
         import time
         start_time = time.time()
@@ -459,7 +466,7 @@ class IntelligentHierarchicalSplitter:
                 logger.info("⚠️ 没有大纲文档，降级使用递归字符分块")
                 if progress_callback:
                     progress_callback("递归分块", "没有大纲，使用基本递归分块")
-                return self._recursive_chunk_content(content, title, file_id)
+                return self._recursive_chunk_content(content, title, file_id, file_path)
             
             # 基于大纲进行智能分块
             logger.info(f"🧠 基于 {len(outline_docs)} 个大纲项目进行智能分块")
@@ -481,7 +488,7 @@ class IntelligentHierarchicalSplitter:
                 # 验证分块结果
                 if not chunks:
                     logger.error("❌ 分块结果为空，降级到递归分块")
-                    return self._recursive_chunk_content(content, title, file_id)
+                    return self._recursive_chunk_content(content, title, file_id, file_path)
                 
                 # 统计分块信息
                 total_chars = sum(len(chunk) for chunk in chunks)
@@ -491,7 +498,7 @@ class IntelligentHierarchicalSplitter:
             except Exception as e:
                 logger.error(f"❌ 内容分割器失败: {e}")
                 logger.error(f"📋 内容分割器配置: chunk_size={self.content_splitter.chunk_size}, overlap={self.content_splitter.chunk_overlap}")
-                return self._recursive_chunk_content(content, title, file_id)
+                return self._recursive_chunk_content(content, title, file_id, file_path)
             
             # 创建内容文档
             logger.info("🏗️ 开始创建内容文档并匹配大纲...")
@@ -521,9 +528,10 @@ class IntelligentHierarchicalSplitter:
                         page_content=chunk,
                         metadata={
                             "file_id": file_id,
+                            "file_path": file_path,
                             "chunk_type": "content",
                             "chunk_level": 3,
-                            "chunk_index": i,
+                            "chunk_index": i + 1,
                             "title": title,
                             "chunk_hash": hashlib.sha256(chunk.encode()).hexdigest(),
                             "parent_heading": best_outline.get('section_path') if best_outline else None,
@@ -558,7 +566,7 @@ class IntelligentHierarchicalSplitter:
             # 验证最终结果
             if not content_docs:
                 logger.error("❌ 智能内容分块结果为空，降级到递归分块")
-                return self._recursive_chunk_content(content, title, file_id)
+                return self._recursive_chunk_content(content, title, file_id, file_path)
             
             logger.info(f"🎉 智能内容分块完成，生成 {len(content_docs)} 个内容块")
             return content_docs
@@ -574,7 +582,7 @@ class IntelligentHierarchicalSplitter:
             
             # 降级到递归分块
             logger.info("🔄 降级到递归分块处理...")
-            return self._recursive_chunk_content(content, title, file_id)
+            return self._recursive_chunk_content(content, title, file_id, file_path)
     
     def _find_best_outline_for_chunk(self, chunk: str, outline_docs: List[Document]) -> Optional[Dict[str, str]]:
         """为内容块找到最相关的大纲项目"""
@@ -748,10 +756,14 @@ class IntelligentHierarchicalSplitter:
         final_score = sum(scores)
         return final_score
     
-    def _recursive_chunk_content(self, content: str, title: str, file_id: int) -> List[Document]:
+    def _recursive_chunk_content(self, content: str, title: str, file_id: int, file_path: str = None) -> List[Document]:
         """递归分块内容（兼容模式）"""
         import time
         start_time = time.time()
+        
+        # 设置默认的file_path
+        if file_path is None:
+            file_path = f"file_{file_id}"
         
         try:
             logger.info(f"🔄 开始递归分块内容 - 文件ID: {file_id}, 标题: {title}")
@@ -764,7 +776,7 @@ class IntelligentHierarchicalSplitter:
             
             # 进行分块
             logger.info("🔪 开始使用递归字符分割器进行分块...")
-            logger.info(f"📋 分割器配置: chunk_size={self.content_splitter.chunk_size}, overlap={self.content_splitter.chunk_overlap}")
+            logger.info(f"📋 分割器配置: chunk_size={self.content_splitter._chunk_size}, overlap={self.content_splitter._chunk_overlap}")
             
             try:
                 chunks = self.content_splitter.split_text(content)
@@ -810,9 +822,10 @@ class IntelligentHierarchicalSplitter:
                         page_content=chunk,
                         metadata={
                             "file_id": file_id,
+                            "file_path": file_path,
                             "chunk_type": "content",
                             "chunk_level": 3,
-                            "chunk_index": i,
+                            "chunk_index": i + 1,
                             "title": title,
                             "chunk_hash": hashlib.sha256(chunk.encode()).hexdigest(),
                             "parent_heading": None,
@@ -854,7 +867,7 @@ class IntelligentHierarchicalSplitter:
             logger.error(f"📋 错误堆栈: {traceback.format_exc()}")
             return []
     
-    def _fallback_to_simple_chunking(self, content: str, title: str, file_id: int) -> Dict[str, List[Document]]:
+    def _fallback_to_simple_chunking(self, content: str, title: str, file_id: int, file_path: str) -> Dict[str, List[Document]]:
         """降级到简单分块（保持兼容性）"""
         import time
         start_time = time.time()
@@ -886,9 +899,10 @@ class IntelligentHierarchicalSplitter:
                     page_content=simple_summary,
                     metadata={
                         "file_id": file_id,
+                        "file_path": file_path,
                         "chunk_type": "summary",
                         "chunk_level": 1,
-                        "chunk_index": 0,
+                        "chunk_index": -1,
                         "title": title,
                         "chunk_hash": hashlib.sha256(simple_summary.encode()).hexdigest(),
                         "parent_heading": None,
@@ -909,7 +923,7 @@ class IntelligentHierarchicalSplitter:
             # 创建内容块
             logger.info("🔄 开始创建内容块...")
             try:
-                content_docs = self._recursive_chunk_content(content, title, file_id)
+                content_docs = self._recursive_chunk_content(content, title, file_id, file_path)
                 logger.info(f"✅ 内容块创建完成，共 {len(content_docs)} 个")
                 
             except Exception as e:

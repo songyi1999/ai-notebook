@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 
-from ..schemas.tag import TagCreate, TagUpdate, TagResponse, FileTagCreate, FileTagResponse
+from ..schemas.tag import TagCreate, TagUpdate, TagResponse, FileTagCreate, FileTagResponse, FileTagWithTagResponse
 from ..services.tag_service import TagService, FileTagService
 from ..database.session import get_db
 
@@ -70,6 +70,13 @@ def get_file_tags_api(file_id: int, db: Session = Depends(get_db)):
     file_tag_service = FileTagService(db)
     file_tags = file_tag_service.get_file_tags_by_file(file_id)
     return file_tags
+
+@router.get("/files/{file_id}/tags/with-details", response_model=List[FileTagWithTagResponse])
+def get_file_tags_with_details_api(file_id: int, db: Session = Depends(get_db)):
+    """获取文件标签及完整标签信息"""
+    file_tag_service = FileTagService(db)
+    file_tags_with_details = file_tag_service.get_file_tags_with_details(file_id)
+    return file_tags_with_details
 
 @router.delete("/files/{file_id}/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_file_tag_api(file_id: int, tag_id: int, db: Session = Depends(get_db)):

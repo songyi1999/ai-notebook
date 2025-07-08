@@ -394,19 +394,24 @@ class FileService(BaseService):
             shutil.move(str(old_physical_path), str(new_physical_path))
             logger.info(f"物理文件重命名成功: {old_path} -> {new_path}")
             
-            # 3. 更新向量索引
+            # 3. 更新向量索引中的文件路径信息
             if db_file:
                 try:
                     from .ai_service_langchain import AIService
                     ai_service = AIService(self.db)
-                    if ai_service.is_available():
-                        # 删除旧的向量索引
-                        ai_service.delete_document_by_file_path(old_path)
-                        # 为新路径创建向量索引
-                        ai_service.create_embeddings(db_file)
-                        logger.info(f"向量索引重命名成功: {old_path} -> {new_path}")
+                    success = ai_service.update_file_path_in_vectors(
+                        file_id=db_file.id,
+                        old_path=old_path,
+                        new_path=new_path,
+                        new_title=new_title
+                    )
+                    if success:
+                        logger.info(f"向量索引路径更新成功: {old_path} -> {new_path}")
+                    else:
+                        logger.warning(f"向量索引路径更新失败: {old_path} -> {new_path}")
                 except Exception as e:
-                    logger.warning(f"更新向量索引失败: {e}")
+                    logger.error(f"更新向量索引路径时出错: {e}")
+                    # 不抛出异常，因为文件重命名本身已成功
             
             return True
             

@@ -14,7 +14,7 @@ langchain-community>=0.0.20
 chromadb>=0.4.18
 docx2txt
 # MCP (Model Context Protocol)
-fastmcp>=2.0.0
+fastmcp>=2.10.2
 
 # 向量计算
 numpy>=1.26.0

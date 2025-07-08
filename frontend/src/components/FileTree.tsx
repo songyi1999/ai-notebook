@@ -436,7 +436,7 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
     // 显示确认对话框
     Modal.confirm({
       title: '确认删除',
-      content: `确定要删除 "${nodePath}" 吗？此操作不可撤销，同时会删除数据库记录和向量索引。`,
+      content: `确定要删除 "${nodePath}" 吗？${nodePath.endsWith('.md') ? '此操作不可撤销，同时会删除数据库记录和向量索引。' : '此操作将删除整个文件夹及其所有内容，包括子文件夹和文件，同时删除相关的数据库记录和向量索引。此操作不可撤销！'}`,
       okText: '确认删除',
       okType: 'danger',
       cancelText: '取消',
@@ -460,9 +460,14 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect, selectedFile }) => {
               message.error(`删除文件失败: ${error instanceof Error ? error.message : '未知错误'}`);
             }
           } else {
-            // 如果是文件夹，提示用户手动删除
-            message.warning('文件夹删除功能暂时不可用，请手动删除文件夹后点击刷新按钮');
-            return;
+            // 如果是文件夹，调用删除文件夹API
+            try {
+              const result = await apiClient.deleteFileByPath(nodePath);
+              message.success(result.message || '文件夹删除成功');
+            } catch (error) {
+              console.error('删除文件夹失败:', error);
+              message.error(`删除文件夹失败: ${error instanceof Error ? error.message : '未知错误'}`);
+            }
           }
           
           await loadFileTree();

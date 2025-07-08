@@ -23,7 +23,8 @@ import {
   ThunderboltOutlined,
   BranchesOutlined
 } from '@ant-design/icons';
-import { search, getSearchHistory, getPopularQueries } from '../services/api';
+import { getSearchHistory, getPopularQueries } from '../services/api';
+import { enhancedSearch } from '../services/aiService';
 import type { SearchResponse, SearchResult, SearchHistory, PopularQuery } from '../services/api';
 
 const { Search } = Input;
@@ -99,8 +100,17 @@ const SearchModal: React.FC<SearchModalProps> = ({ visible, onClose, onSelectFil
     setSearchQuery(trimmedQuery);
 
     try {
-      // 不传递similarity_threshold参数，使用后端配置的默认值
-      const response = await search(trimmedQuery, searchType, 50);
+      // 使用增强的搜索API，支持自动降级
+      const response = await enhancedSearch(trimmedQuery, searchType, 50);
+      
+      // 检查是否发生了降级
+      if (response.degraded) {
+        message.warning({
+          content: `${response.degradationReason || '搜索功能已降级'}`,
+          duration: 5,
+        });
+      }
+      
       setSearchResults(response);
       setActiveTab('search');
       loadSearchHistory();

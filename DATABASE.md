@@ -53,7 +53,7 @@ CREATE INDEX ix_files_parent_folder ON files(parent_folder);
 - `title`: 从文件名或第一个标题提取的标题
 - `content`: 完整的Markdown内容
 - `content_hash`: SHA256哈希值，用于检测文件是否被外部修改
-- `file_metadata`: 扩展元数据，如文档统计信息等
+- `file_metadata`: 扩展元数据，如文档统计信息，文档总结及文档提纲
 
 ### 2. links (链接表)
 

@@ -5,7 +5,8 @@ import {
   SearchOutlined, 
   MenuFoldOutlined, 
   MenuUnfoldOutlined, 
-  RobotOutlined
+  RobotOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 
 import NoteEditor from './components/NoteEditor';
@@ -13,6 +14,7 @@ import FileTree from './components/FileTree';
 import ResizableSider from './components/ResizableSider';
 import SearchModal from './components/SearchModal';
 import ChatModal from './components/ChatModal';
+import ConfigManager from './components/ConfigManager';
 import './App.css';
 
 const { Header, Content } = Layout;
@@ -27,6 +29,7 @@ const MainLayout: React.FC = () => {
   } | null>(null);
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [chatModalVisible, setChatModalVisible] = useState(false);
+  const [configModalVisible, setConfigModalVisible] = useState(false);
   
 
 
@@ -48,6 +51,14 @@ const MainLayout: React.FC = () => {
 
   const handleChatModalClose = () => {
     setChatModalVisible(false);
+  };
+
+  const handleConfigModalOpen = () => {
+    setConfigModalVisible(true);
+  };
+
+  const handleConfigModalClose = () => {
+    setConfigModalVisible(false);
   };
 
   const toggleSider = () => {
@@ -78,6 +89,8 @@ const MainLayout: React.FC = () => {
           handleSearchModalClose();
         } else if (chatModalVisible) {
           handleChatModalClose();
+        } else if (configModalVisible) {
+          handleConfigModalClose();
         }
       }
       // Ctrl+B 切换侧边栏
@@ -85,13 +98,18 @@ const MainLayout: React.FC = () => {
         event.preventDefault();
         toggleSider();
       }
+      // Ctrl+, 打开设置
+      if (event.ctrlKey && event.key === ',') {
+        event.preventDefault();
+        handleConfigModalOpen();
+      }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [searchModalVisible, chatModalVisible]);
+  }, [searchModalVisible, chatModalVisible, configModalVisible]);
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
@@ -140,6 +158,14 @@ const MainLayout: React.FC = () => {
             >
               搜索
             </Button>
+          </Tooltip>
+          <Tooltip title="系统设置 (Ctrl+,)">
+            <Button 
+              type="text" 
+              icon={<SettingOutlined />} 
+              onClick={handleConfigModalOpen}
+              style={{ borderRadius: '6px' }}
+            />
           </Tooltip>
         </Space>
       </Header>
@@ -207,6 +233,12 @@ const MainLayout: React.FC = () => {
         visible={chatModalVisible}
         onClose={handleChatModalClose}
         onSelectFile={handleFileSelect}
+      />
+
+      {/* 配置管理模态窗口 */}
+      <ConfigManager
+        visible={configModalVisible}
+        onClose={handleConfigModalClose}
       />
     </Layout>
   );

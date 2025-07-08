@@ -117,3 +117,5 @@ jspm_packages/
 # DynamoDB Local files
 .dynamodb/ 
 .cursor/
+startcc.sh
+CLAUDE.md

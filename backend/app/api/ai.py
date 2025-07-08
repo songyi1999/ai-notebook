@@ -8,6 +8,7 @@ import asyncio
 
 from ..services.ai_service_langchain import AIService
 from ..services.file_service import FileService
+from ..services.intent_service import IntentService, QueryIntent
 from ..database.session import get_db
 from ..config import settings
 import logging
@@ -37,11 +38,16 @@ class RelatedQuestionsRequest(BaseModel):
     content: str
     num_questions: int = 3
 
+class OutlineRequest(BaseModel):
+    content: str
+    max_items: int = 10
+
 class ChatRequest(BaseModel):
     question: str
     max_context_length: int = 3000
     search_limit: int = 5
     enable_tools: bool = True
+    use_intent_analysis: bool = True
 
 # OpenAI兼容格式
 class Message(BaseModel):
@@ -57,13 +63,14 @@ class OpenAIChatRequest(BaseModel):
     max_context_length: int = 3000
     search_limit: int = 5
     enable_tools: bool = True
-    
+    use_intent_analysis: bool = True
+
 class OpenAIChatResponse(BaseModel):
     """OpenAI兼容的聊天响应模型"""
     model: str  # 返回实际使用的模型名称
     choices: List[Dict]
 
-async def stream_chat_response(ai_service: AIService, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True) -> AsyncGenerator:
+async def stream_chat_response(ai_service: AIService, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True, messages: List[Dict] = None, use_intent_analysis: bool = True) -> AsyncGenerator:
     """处理真正的流式响应
     
     Args:
@@ -75,13 +82,34 @@ async def stream_chat_response(ai_service: AIService, question: str, max_context
     try:
         logger.info(f"开始流式处理问题: {question}")
         
-        # 使用真正的流式RAG问答
-        async for stream_data in ai_service.streaming_chat_with_context(
-            question=question,
-            max_context_length=max_context_length,
-            search_limit=search_limit,
-            enable_tools=enable_tools
-        ):
+        # Intent analysis for optimization
+        use_knowledge_base = True
+        if use_intent_analysis:
+            intent_service = IntentService()
+            intent, confidence, details = intent_service.analyze_intent(question)
+            
+            # Determine if knowledge base should be used
+            use_knowledge_base = intent_service.should_use_knowledge_base(question)
+            logger.info(f"Intent analysis: {intent.value} (confidence: {confidence:.2f}), use_kb: {use_knowledge_base}")
+        
+        # Choose appropriate chat method based on intent
+        if use_knowledge_base:
+            # Use RAG with knowledge base search
+            stream_method = ai_service.streaming_chat_with_context(
+                question=question,
+                max_context_length=max_context_length,
+                search_limit=search_limit,
+                enable_tools=enable_tools,
+                messages=messages
+            )
+        else:
+            # Use direct chat for faster response
+            stream_method = ai_service.direct_chat_streaming(
+                question=question,
+                messages=messages
+            )
+        
+        async for stream_data in stream_method:
             # 检查是否有错误
             if "error" in stream_data:
                 error_data = {
@@ -197,12 +225,15 @@ async def chat_completions(request: OpenAIChatRequest, db: Session = Depends(get
                 detail="问题不能为空"
             )
         
-        logger.info(f"处理OpenAI格式问题: {question}")
+        # 将消息转换为字典格式
+        messages_dict = [{"role": msg.role, "content": msg.content} for msg in request.messages]
+        
+        logger.info(f"处理OpenAI格式问题: {question}，消息历史: {len(messages_dict)} 条")
         
         if request.stream:
             # 返回流式响应
             return StreamingResponse(
-                stream_chat_response(ai_service, question, request.max_context_length, request.search_limit, request.enable_tools),
+                stream_chat_response(ai_service, question, request.max_context_length, request.search_limit, request.enable_tools, messages_dict, request.use_intent_analysis),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -213,12 +244,26 @@ async def chat_completions(request: OpenAIChatRequest, db: Session = Depends(get
             )
         
         # 非流式响应
-        result = ai_service.chat_with_context(
-            question=question,
-            max_context_length=request.max_context_length,
-            search_limit=request.search_limit,
-            enable_tools=request.enable_tools
-        )
+        # Intent analysis for optimization
+        use_knowledge_base = True
+        if request.use_intent_analysis:
+            intent_service = IntentService()
+            use_knowledge_base = intent_service.should_use_knowledge_base(question)
+            logger.info(f"Non-streaming intent analysis: use_kb={use_knowledge_base}")
+        
+        if use_knowledge_base:
+            result = ai_service.chat_with_context(
+                question=question,
+                max_context_length=request.max_context_length,
+                search_limit=request.search_limit,
+                enable_tools=request.enable_tools,
+                messages=messages_dict
+            )
+        else:
+            result = ai_service.direct_chat(
+                question=question,
+                messages=messages_dict
+            )
         
         logger.info(f"生成回答: {result.get('answer', '')[:100]}...")
             
@@ -261,6 +306,27 @@ def generate_summary_api(request: SummaryRequest, db: Session = Depends(get_db))
         )
     
     return {"summary": summary}
+
+@router.post("/ai/outline")
+def generate_outline_api(request: OutlineRequest, db: Session = Depends(get_db)):
+    """生成内容提纲"""
+    ai_service = AIService(db)
+    
+    if not ai_service.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI服务不可用，请检查配置"
+        )
+    
+    outline = ai_service.generate_outline(request.content, request.max_items)
+    
+    if outline is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="提纲生成失败"
+        )
+    
+    return {"outline": outline}
 
 @router.post("/ai/suggest-tags")
 def suggest_tags_api(request: TagSuggestionRequest, db: Session = Depends(get_db)):
@@ -374,12 +440,24 @@ def chat_api(request: ChatRequest, db: Session = Depends(get_db)):
         )
     
     try:
-        result = ai_service.chat_with_context(
-            question=request.question,
-            max_context_length=request.max_context_length,
-            search_limit=request.search_limit,
-            enable_tools=request.enable_tools
-        )
+        # Intent analysis for optimization
+        use_knowledge_base = True
+        if request.use_intent_analysis:
+            intent_service = IntentService()
+            use_knowledge_base = intent_service.should_use_knowledge_base(request.question)
+            logger.info(f"Legacy chat intent analysis: use_kb={use_knowledge_base}")
+        
+        if use_knowledge_base:
+            result = ai_service.chat_with_context(
+                question=request.question,
+                max_context_length=request.max_context_length,
+                search_limit=request.search_limit,
+                enable_tools=request.enable_tools,
+            )
+        else:
+            result = ai_service.direct_chat(
+                question=request.question,
+            )
         
         return result
         

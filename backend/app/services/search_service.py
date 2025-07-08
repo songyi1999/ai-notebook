@@ -8,7 +8,7 @@ from ..models.file import File
 from ..models.search_history import SearchHistory
 from ..services.file_service import FileService
 from ..services.ai_service_langchain import AIService
-from ..config import settings
+from ..dynamic_config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +46,37 @@ class SearchService:
             similarity_threshold = settings.semantic_search_threshold
         
         try:
+            degraded = False
+            degradation_reason = None
+            
+            # 检查AI可用性并处理降级
+            ai_available = self.ai_service.is_available()
+            
             if search_type == "keyword":
                 results = self._keyword_search(query, limit)
                 result_type = "keyword"
             elif search_type == "semantic":
-                results = self._semantic_search(query, limit, similarity_threshold)
-                result_type = "semantic"
+                if not ai_available:
+                    # 语义搜索降级为关键词搜索
+                    logger.warning("AI服务不可用，语义搜索降级为关键词搜索")
+                    results = self._keyword_search(query, limit)
+                    result_type = "keyword"
+                    degraded = True
+                    degradation_reason = "AI功能已禁用" if not settings.is_ai_enabled() else "AI服务暂时不可用"
+                else:
+                    results = self._semantic_search(query, limit, similarity_threshold)
+                    result_type = "semantic"
             elif search_type == "mixed":
-                results = self._mixed_search(query, limit, similarity_threshold)
-                result_type = "mixed"
+                if not ai_available:
+                    # 混合搜索降级为关键词搜索
+                    logger.warning("AI服务不可用，混合搜索降级为关键词搜索")
+                    results = self._keyword_search(query, limit)
+                    result_type = "keyword"
+                    degraded = True
+                    degradation_reason = "AI功能已禁用" if not settings.is_ai_enabled() else "AI服务暂时不可用"
+                else:
+                    results = self._mixed_search(query, limit, similarity_threshold)
+                    result_type = "mixed"
             else:
                 raise ValueError(f"不支持的搜索类型: {search_type}")
             
@@ -62,15 +84,22 @@ class SearchService:
             response_time = (time.time() - start_time) * 1000  # 毫秒
             
             # 记录搜索历史
-            self._record_search_history(query, search_type, len(results), response_time)
+            self._record_search_history(query, result_type, len(results), response_time)
             
-            return {
+            response_data = {
                 "query": query,
                 "search_type": result_type,
                 "total": len(results),
                 "results": results,
                 "response_time_ms": round(response_time, 2)
             }
+            
+            # 添加降级信息
+            if degraded:
+                response_data["degraded"] = True
+                response_data["degradation_reason"] = degradation_reason
+                
+            return response_data
             
         except Exception as e:
             logger.error(f"搜索失败: {e}")

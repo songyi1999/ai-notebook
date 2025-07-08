@@ -206,25 +206,23 @@ class IndexService:
                 return line[2:].strip()
         return filename
     
-    def rebuild_sqlite_index(self, progress_callback=None) -> Dict[str, Any]:
-        """重建SQLite索引"""
+    def _rebuild_sqlite_index_internal(self, progress_callback=None) -> Dict[str, Any]:
+        """仅执行 SQLite 索引重建的内部实现，供公共方法调用"""
         try:
-            logger.info("开始重建SQLite索引...")
+            logger.info("开始重建所有索引...")
             
             # 扫描文件
             files_info = self.scan_notes_directory()
             if progress_callback:
-                progress_callback(10, f"扫描到 {len(files_info)} 个文件")
+                progress_callback(5, f"扫描到 {len(files_info)} 个文件")
             
-            # 清空现有数据（软删除）
+            # 清空现有SQLite数据（软删除）
             self.db.query(File).update({"is_deleted": True})
             self.db.commit()
             if progress_callback:
-                progress_callback(20, "清空现有索引")
+                progress_callback(10, "清空现有SQLite索引")
             
-
-            
-            # 插入新数据
+            # 插入新的SQLite数据
             created_count = 0
             for i, file_info in enumerate(files_info):
                 try:
@@ -258,7 +256,7 @@ class IndexService:
                     created_count += 1
                     
                     if progress_callback and (i + 1) % 10 == 0:
-                        progress = 20 + (i + 1) / len(files_info) * 70
+                        progress = 15 + (i + 1) / len(files_info) * 60
                         progress_callback(progress, f"处理文件 {i + 1}/{len(files_info)}")
                         
                 except Exception as e:
@@ -267,27 +265,38 @@ class IndexService:
             
             self.db.commit()
             if progress_callback:
-                progress_callback(95, "提交数据库更改")
+                progress_callback(80, "提交SQLite数据库更改")
+            
+            # 创建向量化任务
+            from .vectorization_manager import VectorizationManager
+            vectorization_manager = VectorizationManager(self.db)
+            task_count = vectorization_manager.create_vectorization_tasks()
+            
+            if progress_callback:
+                progress_callback(90, f"创建了 {task_count} 个向量化任务")
             
             if progress_callback:
                 progress_callback(100, "重建完成")
             
-            logger.info(f"SQLite索引重建完成，处理了 {created_count} 个文件")
+            logger.info(f"所有索引重建完成，处理了 {created_count} 个文件，创建了 {task_count} 个向量化任务")
             return {
                 "success": True,
                 "processed_files": created_count,
-                "total_files": len(files_info)
+                "total_files": len(files_info),
+                "vectorization_tasks": task_count
             }
             
         except Exception as e:
-            logger.error(f"重建SQLite索引失败: {e}")
+            logger.error(f"重建所有索引失败: {e}")
             self.db.rollback()
             return {
                 "success": False,
                 "error": str(e)
             }
     
-
+    def rebuild_sqlite_index(self, progress_callback=None) -> Dict[str, Any]:
+        """公开的 SQLite 索引重建接口，调用内部实现，避免递归"""
+        return self._rebuild_sqlite_index_internal(progress_callback)
     
     def rebuild_vector_index(self, progress_callback=None) -> Dict[str, Any]:
         """重建ChromaDB向量索引（使用统一原子操作）"""
@@ -394,8 +403,6 @@ class IndexService:
                 "success": False,
                 "error": str(e)
             }
-    
-
     
     def auto_initialize_on_startup(self) -> bool:
         """启动时自动初始化索引 - 简化版，仅检查基本状态"""

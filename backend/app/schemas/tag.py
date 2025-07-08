@@ -37,4 +37,17 @@ class FileTagResponse(FileTagBase):
     created_at: datetime
 
     class Config:
+        from_attributes = True
+
+class FileTagWithTagResponse(BaseModel):
+    """文件标签关联信息，包含完整标签数据"""
+    id: int
+    file_id: int
+    tag_id: int
+    relevance_score: float
+    is_manual: bool
+    created_at: datetime
+    tag: TagResponse  # 包含完整的标签信息
+    
+    class Config:
         from_attributes = True 

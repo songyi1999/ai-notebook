@@ -12,6 +12,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 import logging
+from fastmcp import Client  # 新增，引入官方MCP客户端
 
 from ..models.mcp_server import MCPServer, MCPTool, MCPToolCall
 from ..schemas.mcp import (
@@ -28,6 +29,7 @@ class MCPClientService:
         self.db = db
         self._connections: Dict[int, Any] = {}  # server_id -> connection
         self._tools_cache: Dict[int, List[Dict]] = {}  # server_id -> tools
+        self._fastmcp_clients: Dict[int, Client] = {}  # 缓存fastmcp客户端
         
     async def create_server(self, server_data: MCPServerCreate) -> MCPServer:
         """创建MCP Server配置"""
@@ -172,6 +174,14 @@ class MCPClientService:
             self.db.refresh(tool_call)
             
             logger.info(f"工具调用成功: {request.tool_name}, 耗时: {execution_time:.3f}秒")
+            
+            # 打印工具调用结果，对长结果进行截断
+            result_str = str(result)
+            if len(result_str) > 1000:
+                result_preview = result_str[:1000] + "... (结果已截断)"
+            else:
+                result_preview = result_str
+            logger.info(f"工具调用结果: {request.tool_name} -> {result_preview}")
             
             return MCPToolCallResult(
                 success=True,
@@ -684,84 +694,63 @@ class MCPClientService:
             return None
     
     async def _execute_tool_call(self, tool: MCPTool, arguments: Dict[str, Any]) -> Any:
-        """执行具体的工具调用"""
+        """执行具体的工具调用（通过fastmcp客户端，结果强制转dict）"""
         try:
-            # 根据服务器类型执行调用
-            if tool.server.server_type == "http":
-                return await self._call_http_tool(tool, arguments)
-            elif tool.server.server_type == "stdio":
-                return await self._call_stdio_tool(tool, arguments)
-            elif tool.server.server_type == "sse":
-                return await self._call_sse_tool(tool, arguments)
-            else:
-                raise ValueError(f"不支持的服务器类型: {tool.server.server_type}")
-                
-        except Exception as e:
-            logger.error(f"执行工具调用失败: {e}")
-            raise
-    
-    async def _call_http_tool(self, tool: MCPTool, arguments: Dict[str, Any]) -> Any:
-        """通过HTTP调用工具"""
-        try:
-            import httpx
-            
-            config = tool.server.server_config
-            base_url = config.get('url', 'http://localhost:8000')
-            
-            # 构建请求
-            payload = {
-                "method": "tools/call",
-                "params": {
-                    "name": tool.tool_name,
-                    "arguments": arguments
-                }
-            }
-            
-            # 添加认证
-            headers = {"Content-Type": "application/json"}
-            if tool.server.auth_type == "api_key":
-                auth_config = tool.server.auth_config or {}
-                api_key = auth_config.get('api_key')
-                if api_key:
-                    headers["Authorization"] = f"Bearer {api_key}"
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{base_url}/mcp/call",
-                    json=payload,
-                    headers=headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                
-                result = response.json()
-                return result.get('result', result)
-                
-        except Exception as e:
-            logger.error(f"HTTP工具调用失败: {e}")
-            raise
-    
-    async def _call_stdio_tool(self, tool: MCPTool, arguments: Dict[str, Any]) -> Any:
-        """通过stdio调用工具"""
-        try:
-            # 这里是stdio工具调用的示例实现
-            # 实际实现需要根据具体的MCP协议
-            return {"message": f"stdio工具 {tool.tool_name} 调用成功", "arguments": arguments}
-            
-        except Exception as e:
-            logger.error(f"stdio工具调用失败: {e}")
-            raise
+            client = await self._get_fastmcp_client(tool.server)
+            result = await client.call_tool(tool.tool_name, arguments)
 
-    async def _call_sse_tool(self, tool: MCPTool, arguments: Dict[str, Any]) -> Any:
-        """通过SSE调用工具"""
-        try:
-            # 这里是SSE工具调用的示例实现
-            # 实际实现需要根据具体的MCP协议
-            return {"message": f"SSE工具 {tool.tool_name} 调用成功", "arguments": arguments}
-            
+            result_data = None
+            # 1. fastmcp CallToolResult
+            if hasattr(result, "content"):
+                content = result.content
+                if isinstance(content, list) and content and hasattr(content[0], "text"):
+                    try:
+                        result_data = json.loads(content[0].text)
+                    except Exception:
+                        result_data = {"raw": content[0].text}
+                else:
+                    result_data = {"raw": str(result)}
+            # 2. dict
+            elif isinstance(result, dict):
+                result_data = result
+            # 3. str
+            elif isinstance(result, str):
+                try:
+                    result_data = json.loads(result)
+                except Exception:
+                    result_data = {"raw": result}
+            # 4. 其他
+            else:
+                result_data = {"raw": str(result)}
+
+            return result_data
         except Exception as e:
-            logger.error(f"SSE工具调用失败: {e}")
+            logger.error(f"通过FastMCP执行工具调用失败: {e}")
             raise
+    
+    async def _get_fastmcp_client(self, server: MCPServer) -> Client:
+        """获取或创建 FastMCP 客户端"""
+        if server.id in self._fastmcp_clients:
+            return self._fastmcp_clients[server.id]
+
+        # 根据服务器类型选择不同的连接方式
+        if server.server_type in ("http", "sse"):
+            url = server.server_config.get("url") if server.server_config else None
+            if not url:
+                raise ValueError(f"服务器 {server.name} 缺少url配置，无法创建FastMCP客户端")
+            client: Client = Client(url)
+        elif server.server_type == "stdio":
+            command = server.server_config.get("command") if server.server_config else None
+            if not command:
+                raise ValueError(f"服务器 {server.name} 缺少command配置，无法创建FastMCP客户端")
+            client = Client(command)
+        else:
+            raise ValueError(f"不支持的服务器类型: {server.server_type}")
+
+        # 建立连接
+        await client.__aenter__()
+        self._fastmcp_clients[server.id] = client
+        return client
 
     # 私有方法
     async def _connect_server(self, server: MCPServer) -> bool:

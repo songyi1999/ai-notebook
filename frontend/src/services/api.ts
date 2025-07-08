@@ -362,8 +362,7 @@ export class ApiClient {
 
     // 文件树API
     async getFileTree(rootPath: string = 'notes'): Promise<FileTreeNode[]> {
-        const encodedPath = encodeURIComponent(rootPath);
-        return this.request<FileTreeNode[]>(`/files/tree/${encodedPath}`);
+        return this.request<FileTreeNode[]>(`/files/tree/${encodeURIComponent(rootPath)}`);
     }
 
     // 创建目录
@@ -455,12 +454,23 @@ export class ApiClient {
     async createFileTag(fileId: number, tagId: number): Promise<FileTagData> {
         return this.request<FileTagData>('/file_tags', {
             method: 'POST',
-            body: JSON.stringify({ file_id: fileId, tag_id: tagId }),
+            body: JSON.stringify({
+                file_id: fileId,
+                tag_id: tagId,
+                relevance_score: 1.0,
+                is_manual: true
+            }),
         });
     }
 
     async getFileTags(fileId: number): Promise<FileTagData[]> {
         return this.request<FileTagData[]>(`/files/${fileId}/tags`);
+    }
+
+    async getFileTagsWithDetails(fileId: number): Promise<TagData[]> {
+        const fileTagsWithDetails = await this.request<any[]>(`/files/${fileId}/tags/with-details`);
+        // 从文件标签关联数据中提取标签信息
+        return fileTagsWithDetails.map(fileTag => fileTag.tag);
     }
 
     async deleteFileTag(fileId: number, tagId: number): Promise<void> {
@@ -469,7 +479,23 @@ export class ApiClient {
         });
     }
 
-    // AI标签生成API
+    // AI内容生成API
+    async generateSummary(content: string, maxLength: number = 200): Promise<string> {
+        const response = await this.request<{ summary: string }>('/ai/summary', {
+            method: 'POST',
+            body: JSON.stringify({ content, max_length: maxLength }),
+        });
+        return response.summary;
+    }
+
+    async generateOutline(content: string, maxItems: number = 10): Promise<string> {
+        const response = await this.request<{ outline: string }>('/ai/outline', {
+            method: 'POST',
+            body: JSON.stringify({ content, max_items: maxItems }),
+        });
+        return response.outline;
+    }
+
     async suggestTags(title: string, content: string, maxTags: number = 5): Promise<string[]> {
         const response = await this.request<{ tags: string[] }>('/ai/suggest-tags', {
             method: 'POST',
@@ -613,6 +639,20 @@ export class ApiClient {
     async getSupportedFormats(): Promise<SupportedFormatsResponse> {
         return this.request<SupportedFormatsResponse>('/file-upload/supported-formats');
     }
+
+    /**
+     * 获取文件的摘要内容（若无返回 null）
+     */
+    async getFileSummary(fileId: number): Promise<{ summary: string | null }> {
+        return this.request<{ summary: string | null }>(`/files/${fileId}/summary`);
+    }
+
+    /**
+     * 获取文件的提纲列表
+     */
+    async getFileOutline(fileId: number): Promise<{ outline: string[] }> {
+        return this.request<{ outline: string[] }>(`/files/${fileId}/outline`);
+    }
 }
 
 // 创建默认API客户端实例
@@ -644,9 +684,12 @@ export const deleteTag = (...args: Parameters<ApiClient['deleteTag']>) => apiCli
 // 文件标签关联导出
 export const createFileTag = (...args: Parameters<ApiClient['createFileTag']>) => apiClient.createFileTag(...args);
 export const getFileTags = (...args: Parameters<ApiClient['getFileTags']>) => apiClient.getFileTags(...args);
+export const getFileTagsWithDetails = (...args: Parameters<ApiClient['getFileTagsWithDetails']>) => apiClient.getFileTagsWithDetails(...args);
 export const deleteFileTag = (...args: Parameters<ApiClient['deleteFileTag']>) => apiClient.deleteFileTag(...args);
 
-// AI标签生成导出
+// AI内容生成导出
+export const generateSummary = (...args: Parameters<ApiClient['generateSummary']>) => apiClient.generateSummary(...args);
+export const generateOutline = (...args: Parameters<ApiClient['generateOutline']>) => apiClient.generateOutline(...args);
 export const suggestTags = (...args: Parameters<ApiClient['suggestTags']>) => apiClient.suggestTags(...args);
 
 // 链接相关导出
@@ -758,4 +801,8 @@ export const mcpApi = {
 // 任务处理器相关导出
 export const getProcessorStatus = (...args: Parameters<ApiClient['getProcessorStatus']>) => apiClient.getProcessorStatus(...args);
 export const startProcessor = (...args: Parameters<ApiClient['startProcessor']>) => apiClient.startProcessor(...args);
-export const stopProcessor = (...args: Parameters<ApiClient['stopProcessor']>) => apiClient.stopProcessor(...args); 
+export const stopProcessor = (...args: Parameters<ApiClient['stopProcessor']>) => apiClient.stopProcessor(...args);
+
+// 摘要/提纲
+export const getFileSummary = (...args: Parameters<ApiClient['getFileSummary']>) => apiClient.getFileSummary(...args);
+export const getFileOutline = (...args: Parameters<ApiClient['getFileOutline']>) => apiClient.getFileOutline(...args); 

@@ -200,6 +200,10 @@ class FileTagService:
     def get_file_tags_by_file(self, file_id: int) -> List[FileTag]:
         """获取文件的所有标签"""
         return self.db.query(FileTag).filter(FileTag.file_id == file_id).all()
+    
+    def get_file_tags_with_details(self, file_id: int) -> List[FileTag]:
+        """获取文件的所有标签，包含完整标签信息"""
+        return self.db.query(FileTag).filter(FileTag.file_id == file_id).join(Tag).all()
 
     def get_file_tags_by_tag(self, tag_id: int) -> List[FileTag]:
         """获取标签关联的所有文件"""

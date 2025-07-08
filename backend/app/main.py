@@ -2,8 +2,8 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database.init_db import init_db
-from .api import files, links, tags, ai, index, mcp, file_upload
-from .config import settings
+from .api import files, links, tags, ai, index, mcp, file_upload, config, simple_memory
+from .dynamic_config import settings
 import logging
 
 # 配置日志
@@ -74,13 +74,15 @@ app.include_router(ai.router, prefix=settings.api_prefix, tags=["ai"])
 app.include_router(index.router, prefix=f"{settings.api_prefix}/index", tags=["index"])
 app.include_router(mcp.router, prefix=settings.api_prefix, tags=["mcp"])
 app.include_router(file_upload.router, prefix=f"{settings.api_prefix}/file-upload", tags=["file-upload"])
+app.include_router(config.router, prefix=settings.api_prefix, tags=["config"])
+app.include_router(simple_memory.router, prefix=f"{settings.api_prefix}/simple-memory", tags=["simple-memory"])
 
 @app.get("/")
 async def root():
     return {
         "message": "AI笔记本后端服务运行中", 
         "version": "1.0.0",
-        "ai_enabled": settings.openai_api_key is not None,
+        "ai_enabled": settings.is_ai_enabled(),
         "mcp_enabled": True
     }
 
@@ -90,7 +92,7 @@ async def health_check():
         "status": "healthy", 
         "service": "ai-notebook-backend",
         "notes_directory": settings.notes_directory,
-        "ai_configured": settings.openai_api_key is not None,
+        "ai_configured": settings.is_ai_enabled(),
         "mcp_configured": True
     }
 

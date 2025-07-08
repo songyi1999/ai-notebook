@@ -210,13 +210,23 @@ class TaskProcessorService:
             ).first()
             
             if existing_task:
-                # 如果新任务优先级更高，更新现有任务的优先级
+                # 如果任务处于processing状态（可能因异常中断），重置为pending以便重新处理
+                if existing_task.status == "processing":
+                    existing_task.status = "pending"
+                    logger.info(
+                        f"将processing任务重置为pending: file_id={file_id}, task_type={task_type}"
+                    )
+                # 如果新任务优先级更高，更新优先级
                 if priority > existing_task.priority:
                     existing_task.priority = priority
+                    logger.info(
+                        f"更新现有任务优先级: file_id={file_id}, task_type={task_type}, 新优先级={priority}"
+                    )
+                # 提交变更
                     self.db.commit()
-                    logger.info(f"更新现有任务优先级: file_id={file_id}, task_type={task_type}, 新优先级={priority}")
-                else:
-                    logger.info(f"任务已存在且优先级不低于新任务，跳过添加: file_id={file_id}, task_type={task_type}")
+                logger.info(
+                    f"任务已存在(状态={existing_task.status})，已更新必要字段，跳过重复添加: file_id={file_id}, task_type={task_type}"
+                )
                 return True
             
             # 创建新任务
@@ -274,7 +284,7 @@ class TaskProcessorService:
                     raise Exception(f"文件不存在: file_id={task.file_id}")
                 success = self._process_vector_index_task(file)
             elif task.task_type == "file_import":
-                # 处理文件导入任务（统一原子操作：入库+向量化）- 不需要预先查找文件
+                # 处理文件导入任务（入库+向量化）- 不需要预先查找文件
                 success = self._process_file_import_task(task)
             else:
                 raise Exception(f"未知任务类型: {task.task_type}")
@@ -399,8 +409,10 @@ class TaskProcessorService:
             if existing_file:
                 # 如果文件已存在，检查内容是否有变化
                 if existing_file.content_hash == content_hash:
-                    logger.info(f"✅ 文件内容未变化，跳过导入: {normalized_path}")
-                    return True
+                    logger.info(f"✅ 文件内容未变化，但重试任务需要强制重新处理向量索引: {normalized_path}")
+                    db_file = existing_file
+                    # 强制清理可能存在的部分embedding数据
+                    self._force_cleanup_embeddings(existing_file.id)
                 else:
                     # 内容有变化，更新记录
                     existing_file.content = content
@@ -409,6 +421,8 @@ class TaskProcessorService:
                     existing_file.updated_at = datetime.now()
                     db_file = existing_file
                     logger.info(f"🔄 更新现有文件记录: {normalized_path}")
+                    # 清理旧的embedding数据
+                    self._force_cleanup_embeddings(existing_file.id)
             else:
                 # 创建新的文件记录
                 title = Path(task.file_path).stem
@@ -471,6 +485,39 @@ class TaskProcessorService:
             self.db.rollback()
             return False
     
+    def _force_cleanup_embeddings(self, file_id: int):
+        """强制清理文件的所有embedding数据（用于重试任务）"""
+        try:
+            from ..models.embedding import Embedding
+            from .ai_service_langchain import AIService
+            
+            logger.info(f"🧹 开始强制清理文件 {file_id} 的embedding数据")
+            
+            # 1. 先清理ChromaDB中的向量数据
+            try:
+                ai_service = AIService(self.db)
+                if ai_service.vector_store:
+                    existing_docs = ai_service.vector_store.get(
+                        where={"file_id": file_id}
+                    )
+                    if existing_docs and existing_docs.get('ids'):
+                        ai_service.vector_store.delete(ids=existing_docs['ids'])
+                        logger.info(f"清理ChromaDB向量数据: {len(existing_docs['ids'])} 个")
+            except Exception as e:
+                logger.warning(f"清理ChromaDB数据时出错: {e}")
+            
+            # 2. 清理SQLite中的embedding记录
+            try:
+                deleted_count = self.db.query(Embedding).filter(Embedding.file_id == file_id).delete()
+                self.db.commit()
+                logger.info(f"清理SQLite embedding记录: {deleted_count} 个")
+            except Exception as e:
+                logger.warning(f"清理SQLite数据时出错: {e}")
+                self.db.rollback()
+                
+        except Exception as e:
+            logger.error(f"强制清理embedding数据失败: {e}")
+
     def _get_pending_tasks_count(self) -> int:
         """获取待处理任务数量"""
         try:

@@ -1,0 +1,103 @@
+{
+  "ai_settings": {
+    "enabled": true,
+    "fallback_mode": "notes_only",
+    "language_model": {
+      "provider": "openai_compatible",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "ollama",
+      "model_name": "qwen2.5:0.5b",
+      "temperature": 0.7,
+      "max_tokens": 2048,
+      "timeout": 30
+    },
+    "embedding_model": {
+      "provider": "openai_compatible",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "ollama", 
+      "model_name": "quentinz/bge-large-zh-v1.5:latest",
+      "dimension": 1024
+    }
+  },
+  "presets": {
+    "local_ollama": {
+      "name": "本地 Ollama",
+      "description": "使用本地 Ollama 服务（推荐）",
+      "ai_settings": {
+        "enabled": true,
+        "language_model": {
+          "provider": "openai_compatible",
+          "base_url": "http://localhost:11434/v1",
+          "api_key": "ollama",
+          "model_name": "qwen2.5:0.5b"
+        },
+        "embedding_model": {
+          "provider": "openai_compatible", 
+          "base_url": "http://localhost:11434/v1",
+          "api_key": "ollama",
+          "model_name": "quentinz/bge-large-zh-v1.5:latest",
+          "dimension": 1024
+        }
+      }
+    },
+    "openai_cloud": {
+      "name": "OpenAI 云服务",
+      "description": "使用 OpenAI 官方 API",
+      "ai_settings": {
+        "enabled": true,
+        "language_model": {
+          "provider": "openai",
+          "base_url": "https://api.openai.com/v1",
+          "api_key": "your_openai_api_key",
+          "model_name": "gpt-3.5-turbo"
+        },
+        "embedding_model": {
+          "provider": "openai",
+          "base_url": "https://api.openai.com/v1", 
+          "api_key": "your_openai_api_key",
+          "model_name": "text-embedding-ada-002",
+          "dimension": 1536
+        }
+      }
+    },
+    "notes_only": {
+      "name": "纯笔记模式",
+      "description": "禁用所有AI功能，仅作为笔记管理工具",
+      "ai_settings": {
+        "enabled": false,
+        "fallback_mode": "notes_only"
+      }
+    }
+  },
+  "application": {
+    "theme": "light",
+    "language": "zh-CN",
+    "auto_save": true,
+    "backup_enabled": true
+  },
+  "advanced": {
+    "search": {
+      "semantic_search_threshold": 1.0,
+      "search_limit": 50,
+      "enable_hierarchical_chunking": true
+    },
+    "chunking": {
+      "hierarchical_summary_max_length": 2000,
+      "hierarchical_outline_max_depth": 5,
+      "hierarchical_content_target_size": 1000,
+      "hierarchical_content_max_size": 1500,
+      "hierarchical_content_overlap": 100
+    },
+    "llm": {
+      "context_window": 131072,
+      "chunk_for_llm_processing": 30000,
+      "max_chunks_for_refine": 20
+    }
+  },
+  "meta": {
+    "config_version": "1.0",
+    "last_updated": "2024-01-01T00:00:00Z",
+    "created_by": "user",
+    "description": "AI笔记本配置文件"
+  }
+}

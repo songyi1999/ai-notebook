@@ -88,7 +88,8 @@ def run_rebuild_task(db: Session):
             rebuild_progress["message"] = message
             logger.info(f"重建进度: {progress}% - {message}")
         
-        result = index_service.rebuild_sqlite_index(progress_callback)
+        # 调用统一的全量重建，包含SQLite与ChromaDB向量索引
+        result = index_service.rebuild_all_indexes(progress_callback)
         
         rebuild_progress["result"] = result
         rebuild_progress["is_running"] = False

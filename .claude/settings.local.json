@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(python:*)",
+      "Bash(rg:*)",
+      "Bash(rg \"update.*metadata\" -A 5 -B 2 /mnt/e/project/AI笔记本项目/backend/app/services/ai_service_langchain.py)",
+      "Bash(rg \"\"\"chunk_type\"\": \"\"outline\"\"\" -B 5 -A 10 /mnt/e/project/AI笔记本项目/backend/app/services/hierarchical_splitter.py)",
+      "Bash(sed:*)",
+      "Bash(grep:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(docker-compose down:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(curl:*)",
+      "Bash(docker-compose restart:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm run build:*)",
+      "Bash(rm:*)",
+      "Bash(npm install)",
+      "Bash(docker-compose:*)"
+    ],
+    "deny": []
+  }
+}

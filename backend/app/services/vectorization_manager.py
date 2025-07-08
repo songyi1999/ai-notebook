@@ -222,4 +222,22 @@ class VectorizationManager:
         except Exception as e:
             logger.error(f"清理重复任务失败: {e}")
             self.db.rollback()
+            return 0
+    
+    # ================= 新增公共方法 =================
+    def create_vectorization_tasks(self, priority: int = 2) -> int:
+        """为所有未删除的文件批量创建向量化任务，并返回排队数量。
+
+        该方法主要提供给索引重建流程调用，内部会去重，因而可安全重复执行。"""
+        try:
+            files = self.db.query(File).filter(File.is_deleted == False).all()
+            queued = 0
+            for file in files:
+                added = self._add_vectorization_task(file.id, file.file_path, priority)
+                if added:
+                    queued += 1
+            logger.info(f"批量创建向量化任务完成，共排队 {queued}/{len(files)} 个文件")
+            return queued
+        except Exception as e:
+            logger.error(f"批量创建向量化任务失败: {e}")
             return 0 

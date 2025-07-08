@@ -1,6 +1,6 @@
 # LangChain-Chroma版本的AIService
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, AsyncGenerator
 import logging
 from sqlalchemy.orm import Session
 from langchain_openai import ChatOpenAI
@@ -16,12 +16,15 @@ import threading
 import time
 import json
 from functools import lru_cache
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 from ..models.file import File
 from ..models.embedding import Embedding
 from ..models.tag import Tag
-from ..config import settings
+from ..dynamic_config import settings
 from .mcp_service import MCPClientService
+from .simple_memory_service import SimpleMemoryService
 from ..schemas.mcp import MCPToolCallRequest
 
 logger = logging.getLogger(__name__)
@@ -127,6 +130,24 @@ class ChromaDBManager:
         
         return self._vector_store
     
+    def clear_collection(self):
+        """清空ChromaDB collection中的所有向量"""
+        try:
+            if self._vector_store is not None:
+                # 获取collection中的所有文档ID
+                collection = self._vector_store._collection
+                # 删除所有文档
+                all_docs = collection.get()
+                if all_docs['ids']:
+                    collection.delete(ids=all_docs['ids'])
+                    logger.info(f"已清空ChromaDB collection，删除了 {len(all_docs['ids'])} 个向量")
+                else:
+                    logger.info("ChromaDB collection已经为空")
+                return True
+        except Exception as e:
+            logger.error(f"清空ChromaDB collection失败: {e}")
+            return False
+    
     def reset(self):
         """重置单例（用于测试或重新初始化）"""
         with self._lock:
@@ -140,6 +161,9 @@ class AIService:
         self.db = db
         self.openai_api_key = settings.openai_api_key
         self.openai_base_url = settings.openai_base_url
+        
+        # 初始化简化的记忆服务
+        self.memory_service = SimpleMemoryService()
         
         # 初始化LLM
         if self.openai_api_key:
@@ -188,7 +212,36 @@ class AIService:
 
     def is_available(self) -> bool:
         """检查AI服务是否可用"""
+        # 检查AI是否在配置中启用
+        if not settings.is_ai_enabled():
+            return False
         return bool(self.openai_api_key and self.vector_store)
+
+    def clear_all_embeddings(self) -> bool:
+        """清空所有向量嵌入"""
+        try:
+            logger.info("开始清空所有向量嵌入...")
+            
+            # 清空ChromaDB collection
+            success = self.chroma_manager.clear_collection()
+            
+            if success:
+                # 清空SQLite中的嵌入元数据
+                from ..models.embedding import Embedding
+                deleted_count = self.db.query(Embedding).delete()
+                self.db.commit()
+                logger.info(f"已清空SQLite中的 {deleted_count} 条嵌入元数据")
+                
+                logger.info("所有向量嵌入清空完成")
+                return True
+            else:
+                logger.error("清空ChromaDB collection失败")
+                return False
+                
+        except Exception as e:
+            logger.error(f"清空向量嵌入失败: {e}")
+            self.db.rollback()
+            return False
 
     def create_embeddings(self, file: File, progress_callback=None) -> bool:
         """为文件创建向量嵌入 - 使用智能多层次分块"""
@@ -338,7 +391,7 @@ class AIService:
             splitter = IntelligentHierarchicalSplitter(llm=self.llm)
             
             logger.info("⚙️ 开始调用智能分块器进行文档分析...")
-            hierarchical_docs = splitter.split_document(file.content, file.title, file.id, progress_callback)
+            hierarchical_docs = splitter.split_document(file.content, file.title, file.id, file.file_path, progress_callback)
             
             # 验证分块器返回结果
             if not hierarchical_docs:
@@ -722,9 +775,14 @@ class AIService:
     def _get_file_outline(self, file_id: int) -> List[Dict[str, Any]]:
         """获取文件的大纲"""
         try:
-            # 从向量存储中获取该文件的outline类型文档
+            # 从向量存储中获取该文件的outline类型文档 - 使用正确的ChromaDB查询语法
             docs = self.vector_store.get(
-                where={"file_id": file_id, "chunk_type": "outline"},
+                where={
+                    "$and": [
+                        {"file_id": {"$eq": file_id}},
+                        {"chunk_type": {"$eq": "outline"}}
+                    ]
+                },
                 limit=10
             )
             
@@ -755,9 +813,15 @@ class AIService:
     def _get_section_content(self, file_id: int, section_path: str) -> List[Dict[str, Any]]:
         """获取章节内容"""
         try:
-            # 从向量存储中获取该章节的内容
+            # 从向量存储中获取该章节的内容 - 使用正确的ChromaDB查询语法
             docs = self.vector_store.get(
-                where={"file_id": file_id, "chunk_type": "content", "parent_heading": section_path},
+                where={
+                    "$and": [
+                        {"file_id": {"$eq": file_id}},
+                        {"chunk_type": {"$eq": "content"}},
+                        {"parent_heading": {"$eq": section_path}}
+                    ]
+                },
                 limit=5
             )
             
@@ -922,6 +986,68 @@ class AIService:
             logger.error(f"添加文档到向量数据库失败: {e}")
             return False
 
+    def update_file_path_in_vectors(self, file_id: int, old_path: str, new_path: str, new_title: str) -> bool:
+        """更新向量数据库中文件的路径信息"""
+        try:
+            if not self.vector_store:
+                logger.warning("向量存储不可用，无法更新文件路径")
+                return False
+            
+            logger.info(f"开始更新向量数据库中的文件路径: {old_path} -> {new_path}")
+            
+            # 1. 获取该文件的所有向量文档
+            existing_docs = self.vector_store.get(
+                where={"file_id": file_id}
+            )
+            
+            if not existing_docs or not existing_docs.get('ids'):
+                logger.warning(f"未找到文件 {file_id} 的向量数据")
+                return True  # 没有向量数据也算成功
+            
+            # 2. 收集需要更新的文档信息
+            doc_ids = existing_docs['ids']
+            metadatas = existing_docs['metadatas']
+            embeddings = existing_docs['embeddings']
+            documents = existing_docs['documents']
+            
+            logger.info(f"找到 {len(doc_ids)} 个向量文档需要更新")
+            
+            # 3. 删除旧的文档
+            self.vector_store.delete(ids=doc_ids)
+            logger.info(f"删除了旧的向量文档: {len(doc_ids)} 个")
+            
+            # 4. 更新元数据并重新添加
+            updated_documents = []
+            updated_ids = []
+            
+            for i, (doc_id, metadata, embedding, document_content) in enumerate(zip(doc_ids, metadatas, embeddings, documents)):
+                # 更新元数据中的文件路径和标题
+                metadata['file_path'] = new_path
+                metadata['title'] = new_title
+                
+                # 创建新的文档对象
+                doc = Document(
+                    page_content=document_content,
+                    metadata=metadata
+                )
+                updated_documents.append(doc)
+                updated_ids.append(doc_id)
+            
+            # 5. 重新添加文档（使用预计算的嵌入向量）
+            self.vector_store.add_documents(
+                documents=updated_documents,
+                ids=updated_ids
+            )
+            
+            logger.info(f"成功更新 {len(updated_documents)} 个向量文档的路径信息")
+            return True
+            
+        except Exception as e:
+            logger.error(f"更新向量数据库文件路径失败: {e}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
+            return False
+
     def generate_summary(self, content: str, max_length: int = 200) -> Optional[str]:
         """生成文档摘要"""
         if not self.llm:
@@ -944,6 +1070,37 @@ class AIService:
             
         except Exception as e:
             logger.error(f"生成摘要失败: {e}")
+            return None
+
+    def generate_outline(self, content: str, max_items: int = 10) -> Optional[str]:
+        """生成文档提纲"""
+        if not self.llm:
+            logger.warning("LLM不可用，无法生成提纲")
+            return None
+        
+        try:
+            prompt = f"""请为以下内容生成一个清晰的提纲，包含主要章节和要点，不超过{max_items}个要点：
+
+内容：
+{content[:3000]}  # 限制输入长度
+
+要求：
+1. 提取主要章节和关键要点
+2. 使用层级结构（如：一、二、三... 或 1. 2. 3...）
+3. 保持逻辑清晰，结构合理
+4. 每个要点简洁明了
+
+提纲："""
+            
+            response = self.llm.invoke(prompt)
+            outline = response.content.strip()
+            
+            newline_count = outline.count('\n')
+            logger.info(f"提纲生成成功，包含 {newline_count} 行")
+            return outline
+            
+        except Exception as e:
+            logger.error(f"生成提纲失败: {e}")
             return None
 
     def suggest_tags(self, title: str, content: str, max_tags: int = 5) -> List[str]:
@@ -1412,520 +1569,354 @@ class AIService:
             logger.info(f"生成并缓存新的查询向量: {query[:50]}...")
             return embedding
 
-    def chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True) -> Dict[str, Any]:
-        """基于上下文的智能问答 - RAG实现，支持MCP工具调用和多层次检索"""
-        if not self.is_available():
-            logger.warning("AI服务不可用，无法进行智能问答")
-            return {
-                "answer": "抱歉，AI服务当前不可用，请检查配置。",
-                "related_documents": [],
-                "search_query": question,
-                "error": "AI服务不可用"
-            }
-        
+    def _build_smart_prompt(self, question: str, context: str, messages: List[Dict] = None) -> str:
+        """构建智能提示词，根据上下文内容决定策略，集成用户记忆"""
+        # 获取用户记忆作为背景信息
+        memory_context = ""
         try:
-            start_time = time.time()
-            logger.info(f"开始RAG问答，问题: {question}, 工具调用: {enable_tools}")
-            
-            # 1. 智能上下文检索（支持多层次）
-            if settings.enable_hierarchical_chunking:
-                search_results = self._hierarchical_context_search(question, search_limit)
-            else:
-                search_results = self.semantic_search(
-                    query=question,
-                    limit=search_limit,
-                    similarity_threshold=settings.semantic_search_threshold
-                )
-            
-            logger.info(f"搜索到 {len(search_results)} 个相关文档")
-            
-            # 2. 构建上下文
-            context_parts = []
-            related_docs = []
-            current_length = 0
-            
-            for result in search_results:
-                chunk_text = result.get('chunk_text', '')
-                file_path = result.get('file_path', '')
-                title = result.get('title', '')
-                similarity = result.get('similarity', 0)
-                chunk_type = result.get('chunk_type', 'content')
-                section_path = result.get('section_path', '')
-                
-                # 根据分块类型调整上下文格式
-                if chunk_type == 'summary':
-                    context_part = f"【文档摘要】{title}\n路径：{file_path}\n摘要：{chunk_text}\n"
-                elif chunk_type == 'outline':
-                    context_part = f"【章节大纲】{title} - {section_path}\n路径：{file_path}\n大纲：{chunk_text}\n"
-                else:
-                    context_part = f"【内容片段】{title}\n路径：{file_path}\n内容：{chunk_text}\n"
-                
-                # 检查长度限制
-                if current_length + len(context_part) > max_context_length:
-                    logger.info(f"上下文长度达到限制 {max_context_length}，停止添加更多文档")
-                    break
-                
-                context_parts.append(context_part)
-                current_length += len(context_part)
-                
-                # 添加到相关文档列表（用于前端显示）
-                related_docs.append({
-                    'file_id': result.get('file_id'),
-                    'file_path': file_path,
-                    'title': title,
-                    'similarity': similarity,
-                    'chunk_text': chunk_text[:200] + '...' if len(chunk_text) > 200 else chunk_text,
-                    'chunk_type': chunk_type,
-                    'section_path': section_path
-                })
-            
-            context = "\n\n".join(context_parts)
-            
-            # 3. 获取可用的MCP工具
-            tools = []
-            tool_calls_history = []
-            if enable_tools:
-                try:
-                    tools = self.mcp_service.get_tools_for_llm()
-                    logger.info(f"获取到 {len(tools)} 个可用工具")
-                except Exception as e:
-                    logger.warning(f"获取MCP工具失败: {e}")
-            
-            # 4. 构建提示词
-            prompt = f"""你是一个智能助手，专门回答基于用户笔记内容的问题。请根据以下相关文档内容来回答用户的问题。
+            memory_context = self.memory_service.format_memories_for_prompt(limit=8)
+        except Exception as e:
+            logger.warning(f"获取用户记忆失败: {e}")
+        
+        if messages and len(messages) > 1:
+            # 有对话历史的情况
+            if context.strip():
+                return f"""你是一个智能助手，拥有用户的历史记忆，可以基于用户笔记内容回答问题，也可以使用工具获取实时信息。请根据以下信息来回答用户的问题。
 
-用户问题：{question}
-
-相关文档内容：
+{memory_context}相关文档内容：
 {context}
 
-请根据上述文档内容回答用户的问题。要求：
-1. 回答要准确、有用，基于提供的文档内容
-2. 如果文档内容不足以完全回答问题，请说明并提供你能确定的部分
-3. 回答要简洁明了，重点突出
-4. 如果可能，请引用具体的文档来源
-5. 如果需要额外信息或执行特定任务，可以使用可用的工具
-
-回答："""
-
-            # 5. 调用LLM生成回答（支持工具调用）
-            logger.info(f"调用LLM生成回答，上下文长度: {len(context)} 字符")
-            
-            if tools:
-                # 使用工具调用
-                llm_with_tools = self.llm.bind_tools(tools)
-                response = llm_with_tools.invoke(prompt)
-                
-                # 处理工具调用
-                if response.tool_calls:
-                    logger.info(f"LLM决定调用 {len(response.tool_calls)} 个工具")
-                    
-                    # 执行工具调用
-                    tool_results = []
-                    for tool_call in response.tool_calls:
-                        try:
-                            tool_name = tool_call["name"]
-                            tool_args = tool_call["args"]
-                            
-                            logger.info(f"调用工具: {tool_name}, 参数: {tool_args}")
-                            
-                            # 执行工具调用
-                            import asyncio
-                            
-                            request = MCPToolCallRequest(
-                                tool_name=tool_name,
-                                arguments=tool_args,
-                                session_id=f"chat_{int(time.time())}"
-                            )
-                            result = asyncio.run(self.mcp_service.call_tool(request))
-                            
-                            tool_results.append({
-                                "tool_name": tool_name,
-                                "arguments": tool_args,
-                                "result": result.result if result.success else result.error,
-                                "success": result.success,
-                                "execution_time": result.execution_time_ms
-                            })
-                            
-                            tool_calls_history.append({
-                                "tool_name": tool_name,
-                                "arguments": tool_args,
-                                "result": result.result if result.success else result.error,
-                                "success": result.success,
-                                "execution_time": result.execution_time_ms
-                            })
-                            
-                        except Exception as e:
-                            logger.error(f"工具调用失败: {e}")
-                            tool_results.append({
-                                "tool_name": tool_call.get("name", "unknown"),
-                                "arguments": tool_call.get("args", {}),
-                                "result": f"工具调用失败: {str(e)}",
-                                "success": False,
-                                "execution_time": 0
-                            })
-                    
-                    # 将工具结果整合到最终回答中
-                    if tool_results:
-                        tool_summary = "\n\n工具调用结果：\n"
-                        for i, result in enumerate(tool_results, 1):
-                            status = "成功" if result["success"] else "失败"
-                            tool_summary += f"{i}. {result['tool_name']} ({status}): {result['result']}\n"
-                        
-                        # 重新调用LLM，整合工具结果
-                        final_prompt = f"{prompt}\n\n{tool_summary}\n\n请根据上述信息和工具调用结果，提供最终的回答："
-                        final_response = self.llm.invoke(final_prompt)
-                        answer = final_response.content.strip()
-                    else:
-                        answer = response.content.strip()
-                else:
-                    answer = response.content.strip()
+请根据上述信息和对话历史回答用户的问题。要求：
+1. 优先结合用户记忆信息，提供个性化回答
+2. 基于提供的文档内容回答问题
+3. 如果文档内容不足，可以使用可用的工具获取额外信息
+4. 回答要准确、有用，简洁明了
+5. 如果引用文档内容，请说明来源
+6. 保持对话的连贯性和个性化
+7. 根据用户的偏好和习惯调整回答风格"""
             else:
-                # 不使用工具调用
-                response = self.llm.invoke(prompt)
-                answer = response.content.strip()
-            
-            total_time = time.time() - start_time
-            logger.info(f"RAG问答完成，耗时: {total_time:.3f}秒，回答长度: {len(answer)} 字符")
-            
-            result = {
-                "answer": answer,
-                "related_documents": related_docs,
-                "search_query": question,
-                "context_length": len(context),
-                "processing_time": round(total_time, 3),
-                "tools_used": len(tools) if tools else 0
-            }
-            
-            # 如果有工具调用历史，添加到结果中
-            if tool_calls_history:
-                result["tool_calls"] = tool_calls_history
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"RAG问答失败: {e}")
-            import traceback
-            logger.error(f"详细错误信息: {traceback.format_exc()}")
-            
-            return {
-                "answer": f"抱歉，处理您的问题时出现了错误：{str(e)}",
-                "related_documents": [],
-                "search_query": question,
-                "error": str(e)
-            }
+                return f"""你是一个智能助手，可以回答各种问题并使用工具获取实时信息。当前没有找到相关的笔记内容，但你可以使用可用的工具来回答用户问题。
 
-    async def streaming_chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True):
-        """基于上下文的流式智能问答 - RAG实现，支持MCP工具调用"""
-        if not self.is_available() or not self.streaming_llm:
-            logger.warning("AI服务或流式LLM不可用，无法进行流式智能问答")
-            yield {
-                "error": "AI服务不可用",
-                "related_documents": [],
-                "search_query": question
-            }
-            return
-        
-        try:
-            start_time = time.time()
-            logger.info(f"开始流式RAG问答，问题: {question}, 工具调用: {enable_tools}")
-            
-            # 1. 语义搜索相关文档
-            search_results = self.semantic_search(
-                query=question,
-                limit=search_limit,
-                similarity_threshold=settings.semantic_search_threshold
-            )
-            
-            logger.info(f"搜索到 {len(search_results)} 个相关文档")
-            
-            # 2. 构建上下文
-            context_parts = []
-            related_docs = []
-            current_length = 0
-            
-            for result in search_results:
-                chunk_text = result.get('chunk_text', '')
-                file_path = result.get('file_path', '')
-                title = result.get('title', '')
-                similarity = result.get('similarity', 0)
-                
-                # 准备上下文片段
-                context_part = f"文档：{title}\n路径：{file_path}\n内容：{chunk_text}\n"
-                
-                # 检查长度限制
-                if current_length + len(context_part) > max_context_length:
-                    logger.info(f"上下文长度达到限制 {max_context_length}，停止添加更多文档")
-                    break
-                
-                context_parts.append(context_part)
-                current_length += len(context_part)
-                
-                # 添加到相关文档列表（用于前端显示）
-                related_docs.append({
-                    'file_id': result.get('file_id'),
-                    'file_path': file_path,
-                    'title': title,
-                    'similarity': similarity,
-                    'chunk_text': chunk_text[:200] + '...' if len(chunk_text) > 200 else chunk_text
-                })
-            
-            context = "\n\n".join(context_parts)
-            
-            # 3. 获取可用的MCP工具
-            tools = []
-            tool_calls_history = []
-            if enable_tools:
-                try:
-                    tools = self.mcp_service.get_tools_for_llm()
-                    logger.info(f"获取到 {len(tools)} 个可用工具")
-                except Exception as e:
-                    logger.warning(f"获取MCP工具失败: {e}")
-            
-            # 4. 构建提示词
-            prompt = f"""你是一个智能助手，专门回答基于用户笔记内容的问题。请根据以下相关文档内容来回答用户的问题。
-
-用户问题：{question}
-
-相关文档内容：
-{context}
-
-请根据上述文档内容回答用户的问题。要求：
-1. 回答要准确、有用，基于提供的文档内容
-2. 如果文档内容不足以完全回答问题，请说明并提供你能确定的部分
-3. 回答要简洁明了，重点突出
-4. 如果可能，请引用具体的文档来源
-5. 如果需要额外信息或执行特定任务，可以使用可用的工具
-
-回答："""
-
-            # 5. 检查是否需要工具调用（先进行非流式检查）
-            if tools:
-                # 先用非流式LLM检查是否需要工具调用
-                llm_with_tools = self.llm.bind_tools(tools)
-                check_response = llm_with_tools.invoke(prompt)
-                
-                if check_response.tool_calls:
-                    logger.info(f"LLM决定调用 {len(check_response.tool_calls)} 个工具")
-                    
-                    # 发送工具调用开始信号
-                    yield {
-                        "tool_calls_started": True,
-                        "tool_count": len(check_response.tool_calls),
-                        "related_documents": related_docs,
-                        "search_query": question,
-                        "context_length": len(context)
-                    }
-                    
-                    # 执行工具调用
-                    tool_results = []
-                    for i, tool_call in enumerate(check_response.tool_calls):
-                        try:
-                            tool_name = tool_call["name"]
-                            tool_args = tool_call["args"]
-                            
-                            # 发送工具调用进度
-                            yield {
-                                "tool_call_progress": {
-                                    "index": i + 1,
-                                    "total": len(check_response.tool_calls),
-                                    "tool_name": tool_name,
-                                    "status": "executing"
-                                }
-                            }
-                            
-                            logger.info(f"调用工具: {tool_name}, 参数: {tool_args}")
-                            
-                            # 执行工具调用
-                            request = MCPToolCallRequest(
-                                tool_name=tool_name,
-                                arguments=tool_args,
-                                session_id=f"stream_chat_{int(time.time())}"
-                            )
-                            result = await self.mcp_service.call_tool(request)
-                            
-                            tool_result = {
-                                "tool_name": tool_name,
-                                "arguments": tool_args,
-                                "result": result.result if result.success else result.error,
-                                "success": result.success,
-                                "execution_time": result.execution_time_ms
-                            }
-                            
-                            tool_results.append(tool_result)
-                            tool_calls_history.append(tool_result)
-                            
-                            # 发送工具调用完成
-                            yield {
-                                "tool_call_progress": {
-                                    "index": i + 1,
-                                    "total": len(check_response.tool_calls),
-                                    "tool_name": tool_name,
-                                    "status": "completed",
-                                    "result": tool_result
-                                }
-                            }
-                            
-                        except Exception as e:
-                            logger.error(f"工具调用失败: {e}")
-                            error_result = {
-                                "tool_name": tool_call.get("name", "unknown"),
-                                "arguments": tool_call.get("args", {}),
-                                "result": f"工具调用失败: {str(e)}",
-                                "success": False,
-                                "execution_time": 0
-                            }
-                            tool_results.append(error_result)
-                            
-                            # 发送工具调用错误
-                            yield {
-                                "tool_call_progress": {
-                                    "index": i + 1,
-                                    "total": len(check_response.tool_calls),
-                                    "tool_name": tool_call.get("name", "unknown"),
-                                    "status": "error",
-                                    "error": str(e)
-                                }
-                            }
-                    
-                    # 发送工具调用完成信号
-                    yield {
-                        "tool_calls_completed": True,
-                        "tool_results": tool_results
-                    }
-                    
-                    # 将工具结果整合到提示词中
-                    if tool_results:
-                        tool_summary = "\n\n工具调用结果：\n"
-                        for i, result in enumerate(tool_results, 1):
-                            status = "成功" if result["success"] else "失败"
-                            tool_summary += f"{i}. {result['tool_name']} ({status}): {result['result']}\n"
-                        
-                        # 更新提示词
-                        prompt = f"{prompt}\n\n{tool_summary}\n\n请根据上述信息和工具调用结果，提供最终的回答："
-            
-            # 6. 流式调用LLM生成回答
-            logger.info(f"开始流式调用LLM，上下文长度: {len(context)} 字符")
-            
-            # 使用LangChain的astream方法进行真正的流式输出
-            async for chunk in self.streaming_llm.astream(prompt):
-                if chunk.content:  # 只有当chunk有内容时才yield
-                    yield {
-                        "chunk": chunk.content,
-                        "related_documents": related_docs,
-                        "search_query": question,
-                        "context_length": len(context)
-                    }
-            
-            # 流式结束后发送最终统计信息
-            total_time = time.time() - start_time
-            logger.info(f"流式RAG问答完成，耗时: {total_time:.3f}秒")
-            
-            final_result = {
-                "finished": True,
-                "processing_time": round(total_time, 3),
-                "related_documents": related_docs,
-                "search_query": question,
-                "context_length": len(context),
-                "tools_used": len(tools) if tools else 0
-            }
-            
-            # 如果有工具调用历史，添加到结果中
-            if tool_calls_history:
-                final_result["tool_calls"] = tool_calls_history
-            
-            yield final_result
-            
-        except Exception as e:
-            logger.error(f"流式RAG问答失败: {e}")
-            import traceback
-            logger.error(f"详细错误信息: {traceback.format_exc()}")
-            
-            yield {
-                "error": str(e),
-                "related_documents": [],
-                "search_query": question
-            }
-
-    def _hierarchical_context_search(self, question: str, search_limit: int) -> List[Dict[str, Any]]:
-        """多层次上下文搜索 - 为RAG问答优化"""
-        try:
-            logger.info(f"开始多层次上下文搜索: {question}")
-            
-            # 分析问题类型，决定搜索策略
-            question_type = self._analyze_question_type(question)
-            
-            context_results = []
-            
-            if question_type == 'overview':
-                # 概览性问题：优先搜索摘要层
-                summary_results = self._search_by_chunk_type(question, "summary", search_limit//2, 0.8)
-                outline_results = self._search_by_chunk_type(question, "outline", search_limit//2, 0.7)
-                content_results = self._search_by_chunk_type(question, "content", search_limit//3, 0.7)
-                
-                # 智能上下文扩展：为摘要匹配的文件获取关键章节
-                for summary_result in summary_results:
-                    context_results.append(summary_result)
-                    # 获取该文件的重要章节
-                    file_outlines = self._get_file_outline(summary_result['file_id'])
-                    context_results.extend(file_outlines[:2])  # 添加前2个章节
-                
-                context_results.extend(outline_results)
-                context_results.extend(content_results)
-                
-            elif question_type == 'specific':
-                # 具体问题：优先搜索内容层，补充相关大纲
-                content_results = self._search_by_chunk_type(question, "content", search_limit, 0.7)
-                outline_results = self._search_by_chunk_type(question, "outline", search_limit//2, 0.7)
-                
-                # 为内容匹配结果添加上下文
-                for content_result in content_results:
-                    context_results.append(content_result)
-                    
-                    # 如果有章节信息，尝试获取相邻内容
-                    if content_result.get('parent_heading'):
-                        sibling_content = self._get_section_content(
-                            content_result['file_id'], 
-                            content_result['parent_heading']
-                        )
-                        context_results.extend(sibling_content[:1])  # 添加1个相邻内容块
-                
-                context_results.extend(outline_results)
-                
-            else:
-                # 默认策略：平衡搜索各个层次
-                summary_results = self._search_by_chunk_type(question, "summary", search_limit//4, 0.8)
-                outline_results = self._search_by_chunk_type(question, "outline", search_limit//3, 0.7)
-                content_results = self._search_by_chunk_type(question, "content", search_limit, 0.7)
-                
-                context_results.extend(summary_results)
-                context_results.extend(outline_results)
-                context_results.extend(content_results)
-            
-            # 去重并排序
-            final_results = self._deduplicate_and_rank(context_results, search_limit * 2)
-            
-            logger.info(f"多层次上下文搜索完成: 返回 {len(final_results)} 个结果")
-            return final_results[:search_limit]
-            
-        except Exception as e:
-            logger.error(f"多层次上下文搜索失败: {e}")
-            # 降级到传统搜索
-            return self.semantic_search(question, search_limit, settings.semantic_search_threshold)
-    
-    def _analyze_question_type(self, question: str) -> str:
-        """分析问题类型"""
-        question_lower = question.lower()
-        
-        # 概览性问题关键词
-        overview_keywords = ['什么是', '介绍', '概述', '总结', '整体', '全部', '所有', '概况', '总体']
-        
-        # 具体问题关键词
-        specific_keywords = ['如何', '怎么', '为什么', '哪里', '何时', '具体', '详细', '步骤', '方法']
-        
-        if any(keyword in question_lower for keyword in overview_keywords):
-            return 'overview'
-        elif any(keyword in question_lower for keyword in specific_keywords):
-            return 'specific'
+{memory_context}请根据对话历史回答用户的问题。要求：
+1. 如果问题需要实时信息（如天气、地图等），请使用相应的工具
+2. 回答要准确、有用，简洁明了
+3. 如果使用工具获取信息，请整合工具结果提供完整回答
+4. 请结合之前的对话历史，保持对话的连贯性
+5. 如果无法通过工具获取所需信息，请诚实说明
+6. 根据用户背景信息提供个性化回答"""
         else:
-            return 'balanced'
+            # 没有对话历史的情况
+            if context.strip():
+                return f"""你是一个智能助手，可以基于用户笔记内容回答问题，也可以使用工具获取实时信息。请根据以下相关文档内容来回答用户的问题。
+
+用户问题：{question}
+
+{memory_context}相关文档内容：
+{context}
+
+请根据上述文档内容回答用户的问题。要求：
+1. 优先基于提供的文档内容回答
+2. 如果文档内容不足以完全回答问题，可以使用可用的工具获取额外信息
+3. 回答要准确、有用，简洁明了
+4. 如果引用文档内容，请说明来源
+5. 如果使用工具获取信息，请整合工具结果提供完整回答
+6. 根据用户背景信息提供个性化回答
+
+回答："""
+            else:
+                return f"""你是一个智能助手，可以回答各种问题并使用工具获取实时信息。当前没有找到相关的笔记内容，但你可以使用可用的工具来回答用户问题。
+
+用户问题：{question}
+
+{memory_context}请回答用户的问题。要求：
+1. 如果问题需要实时信息（如天气、地图等），请使用相应的工具
+2. 回答要准确、有用，简洁明了
+3. 如果使用工具获取信息，请整合工具结果提供完整回答
+4. 如果无法通过工具获取所需信息，请诚实说明
+
+回答："""
+
+    def _extract_memories_from_conversation_async(self, question: str, answer: str, source: str) -> None:
+        """异步从对话中提取记忆信息"""
+        def _extract_memories():
+            try:
+                # 处理对话并更新记忆
+                result = self.memory_service.process_conversation(question, answer)
+                
+                if result.get("status") == "success":
+                    logger.info(f"从对话中自动更新记忆: {result.get('old_count')} -> {result.get('new_count')} 条记忆")
+                else:
+                    logger.warning(f"对话记忆处理失败: {result.get('message', '未知错误')}")
+                
+            except Exception as e:
+                logger.error(f"提取对话记忆失败: {e}")
+        
+        # 异步执行记忆提取，不阻塞主线程
+        try:
+            executor = ThreadPoolExecutor(max_workers=1)
+            executor.submit(_extract_memories)
+            logger.debug("记忆提取任务已提交到后台执行")
+        except Exception as e:
+            logger.error(f"提交记忆提取任务失败: {e}")
+
+    def chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True, messages: List[Dict] = None) -> Dict[str, Any]:
+        """基于知识库内容的智能问答"""
+        if not self.is_available():
+            logger.warning("AI service not available")
+            return {"error": "AI service not available"}
+        
+        try:
+            start_time = time.time()
+            logger.info(f"Starting chat with context: {question}")
+            
+            # 获取相关文档
+            context_results = self._hierarchical_context_search(question, search_limit)
+            
+            # 构建上下文
+            context = self._build_context_from_results(context_results, max_context_length)
+            
+            # 构建提示词
+            prompt = self._build_smart_prompt(question, context, messages)
+            
+            # 获取LLM回答
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            
+            # 异步提取记忆（不阻塞响应）
+            self._extract_memories_from_conversation_async(question, response.content, "chat_with_context")
+            
+            total_time = time.time() - start_time
+            logger.info(f"Chat completed in {total_time:.3f}s")
+            
+            return {
+                "answer": response.content,
+                "related_documents": context_results,
+                "search_query": question,
+                "context_length": len(context),
+                "processing_time": round(total_time, 3),
+                "tools_used": 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Chat failed: {e}")
+            return {"error": str(e)}
+
+    def direct_chat(self, question: str, messages: List[Dict] = None) -> Dict[str, Any]:
+        """Non-streaming direct chat for quick responses"""
+        if not self.is_available():
+            logger.warning("AI service not available")
+            return {"error": "AI service not available"}
+        
+        try:
+            start_time = time.time()
+            logger.info(f"Starting direct chat: {question}")
+            
+            # Build message history  
+            if messages and len(messages) > 1:
+                conversation_history = []
+                for msg in messages[:-1]:
+                    if msg.get('role') == 'user':
+                        conversation_history.append(HumanMessage(content=msg.get('content', '')))
+                    elif msg.get('role') == 'assistant':
+                        conversation_history.append(AIMessage(content=msg.get('content', '')))
+                
+                full_messages = conversation_history + [HumanMessage(content=question)]
+            else:
+                full_messages = [HumanMessage(content=question)]
+            
+            # Get response from LLM
+            response = self.llm.invoke(full_messages)
+            
+            # 异步提取记忆（不阻塞响应）
+            self._extract_memories_from_conversation_async(question, response.content, "direct_chat")
+            
+            total_time = time.time() - start_time
+            logger.info(f"Direct chat completed in {total_time:.3f}s")
+            
+            return {
+                "answer": response.content,
+                "related_documents": [],
+                "search_query": question,
+                "context_length": 0,
+                "processing_time": round(total_time, 3),
+                "tools_used": 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Direct chat failed: {e}")
+            return {"error": str(e)}
+
+    def _hierarchical_context_search(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        """层次化上下文搜索 - 基于语义搜索的封装"""
+        try:
+            # 使用现有的层次化语义搜索
+            similarity_threshold = settings.semantic_search_threshold
+            return self._hierarchical_semantic_search(query, limit, similarity_threshold)
+        except Exception as e:
+            logger.error(f"层次化上下文搜索失败: {e}")
+            return []
+
+    def _build_context_from_results(self, search_results: List[Dict[str, Any]], max_length: int = 3000) -> str:
+        """从搜索结果构建上下文字符串"""
+        if not search_results:
+            return ""
+        
+        context_parts = []
+        current_length = 0
+        
+        for result in search_results:
+            content = result.get('content', '')
+            file_path = result.get('file_path', 'Unknown')
+            chunk_type = result.get('chunk_type', 'content')
+            
+            # 格式化结果片段
+            if chunk_type == "summary":
+                formatted_content = f"[摘要 - {file_path}]\n{content}\n"
+            elif chunk_type == "outline":
+                formatted_content = f"[大纲 - {file_path}]\n{content}\n"
+            else:
+                formatted_content = f"[内容 - {file_path}]\n{content}\n"
+            
+            # 检查长度限制
+            if current_length + len(formatted_content) > max_length:
+                break
+                
+            context_parts.append(formatted_content)
+            current_length += len(formatted_content)
+        
+        return "\n".join(context_parts)
+
+    def create_memory_from_chat(self, content: str, memory_type: str = "fact", 
+                              category: str = "personal", importance_score: float = 0.5) -> bool:
+        """手动创建聊天记忆"""
+        try:
+            success = self.memory_service.add_manual_memory(content, memory_type, importance_score)
+            logger.info(f"手动创建聊天记忆成功")
+            return success
+            
+        except Exception as e:
+            logger.error(f"创建聊天记忆失败: {e}")
+            return False
+
+    async def direct_chat_streaming(self, question: str, messages: List[Dict] = None) -> AsyncGenerator[Dict[str, Any], None]:
+        """直接聊天 - 流式响应版本"""
+        if not self.is_available():
+            logger.warning("AI service not available")
+            yield {"error": "AI service not available"}
+            return
+
+        try:
+            # 构建提示词
+            prompt = self._build_smart_prompt(question, "", messages)
+            
+            # 构建消息历史
+            chat_history = []
+            if messages:
+                for msg in messages:
+                    chat_history.append({"role": msg["role"], "content": msg["content"]})
+            
+            # 添加系统提示词
+            chat_history.insert(0, {"role": "system", "content": prompt})
+            
+            # 添加用户问题
+            chat_history.append({"role": "user", "content": question})
+            
+            # 调用LangChain流式聊天
+            from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+            
+            langchain_messages = []
+            for msg in chat_history:
+                if msg["role"] == "system":
+                    langchain_messages.append(SystemMessage(content=msg["content"]))
+                elif msg["role"] == "user":
+                    langchain_messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    langchain_messages.append(AIMessage(content=msg["content"]))
+            
+            # 使用LangChain的streaming方式
+            collected_messages = []
+            for chunk in self.streaming_llm.stream(langchain_messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    content = chunk.content
+                    collected_messages.append(content)
+                    yield {"chunk": content}
+            
+            # 异步提取记忆（不阻塞响应）
+            full_response = "".join(collected_messages)
+            self._extract_memories_from_conversation_async(question, full_response, "direct_chat")
+            
+        except Exception as e:
+            logger.error(f"直接聊天出错: {e}")
+            yield {"error": f"对话出错: {str(e)}"}
+
+    async def streaming_chat_with_context(self, question: str, max_context_length: int = 3000, search_limit: int = 5, enable_tools: bool = True, messages: List[Dict] = None) -> AsyncGenerator[Dict[str, Any], None]:
+        """基于知识库内容的智能问答 - 流式响应版本"""
+        if not self.is_available():
+            logger.warning("AI service not available")
+            yield {"error": "AI service not available"}
+            return
+
+        try:
+            start_time = time.time()
+            logger.info(f"Starting streaming chat with context: {question}")
+            
+            # 获取相关文档
+            context_results = self._hierarchical_context_search(question, search_limit)
+            
+            # 构建上下文
+            context = self._build_context_from_results(context_results, max_context_length)
+            
+            # 构建提示词
+            prompt = self._build_smart_prompt(question, context, messages)
+            
+            # 构建消息历史
+            chat_history = []
+            if messages:
+                for msg in messages:
+                    chat_history.append({"role": msg["role"], "content": msg["content"]})
+            
+            # 添加系统提示词
+            chat_history.insert(0, {"role": "system", "content": prompt})
+            
+            # 添加用户问题
+            chat_history.append({"role": "user", "content": question})
+            
+            # 调用LangChain流式聊天
+            from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+            
+            langchain_messages = []
+            for msg in chat_history:
+                if msg["role"] == "system":
+                    langchain_messages.append(SystemMessage(content=msg["content"]))
+                elif msg["role"] == "user":
+                    langchain_messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    langchain_messages.append(AIMessage(content=msg["content"]))
+            
+            # 使用LangChain的streaming方式
+            collected_messages = []
+            for chunk in self.streaming_llm.stream(langchain_messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    content = chunk.content
+                    collected_messages.append(content)
+                    yield {"chunk": content}
+            
+            # 异步提取记忆（不阻塞响应）
+            full_response = "".join(collected_messages)
+            self._extract_memories_from_conversation_async(question, full_response, "chat_with_context")
+            
+            total_time = time.time() - start_time
+            logger.info(f"Streaming chat completed in {total_time:.3f}s")
+            
+            # 发送最终信息
+            yield {
+                "related_documents": context_results,
+                "search_query": question,
+                "context_length": len(context),
+                "processing_time": round(total_time, 3),
+                "tools_used": 0,
+                "finished": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Streaming chat failed: {e}")
+            yield {"error": str(e)}

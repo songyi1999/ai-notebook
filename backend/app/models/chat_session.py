@@ -1,6 +1,7 @@
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy.orm import relationship
 from .base import Base
 
 class ChatSession(Base):
@@ -13,3 +14,6 @@ class ChatSession(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True, index=True)
     session_metadata = Column(JSON) 
+    
+    # 关联关系
+    # Note: Memory relationships removed (using simple JSON file-based memory system now) 

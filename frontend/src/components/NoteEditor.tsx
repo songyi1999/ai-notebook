@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button, Input, Space, message, Tabs, Typography, Spin, Divider, Modal } from 'antd';
-import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined, ToolOutlined, LinkOutlined } from '@ant-design/icons';
+import { SaveOutlined, FileTextOutlined, EyeOutlined, EditOutlined, SyncOutlined, DatabaseOutlined, ClockCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, TagOutlined, RobotOutlined, ShareAltOutlined, ToolOutlined, LinkOutlined, FileSearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
-import { apiClient, SystemStatus, ProcessorStatus, search, getProcessorStatus, startProcessor, stopProcessor } from '../services/api';
+import { apiClient, SystemStatus, ProcessorStatus, search, getProcessorStatus, startProcessor, stopProcessor, generateSummary, generateOutline, getFileSummary, getFileOutline } from '../services/api';
 import TagManager from './TagManager';
 import AutoProcessor from './AutoProcessor';
 import LinkGraph from './LinkGraph';
 import MCPManager from './MCPManager';
 import LinkManager from './LinkManager';
+import FileTagsBar from './FileTagsBar';
 
 const { Text } = Typography;
 
@@ -156,6 +157,10 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
   const [processorStatus, setProcessorStatus] = useState<ProcessorStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [tagRefreshTrigger, setTagRefreshTrigger] = useState(0);
+  const [summaryContent, setSummaryContent] = useState<string>('');
+  const [outlineContent, setOutlineContent] = useState<string>('');
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [outlineLoading, setOutlineLoading] = useState(false);
   
 
 
@@ -273,6 +278,24 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
       console.log('文件加载成功:', fileData);
       setIsModified(false);
       setSaveStatus('saved');
+      // 获取已保存的摘要和提纲
+      if (fileData.id) {
+        try {
+          const [{ summary }, { outline }] = await Promise.all([
+            getFileSummary(fileData.id),
+            getFileOutline(fileData.id)
+          ]);
+          setSummaryContent(summary || '');
+          setOutlineContent(outline && outline.length ? outline.join('\n') : '');
+        } catch (err) {
+          console.warn('获取摘要/提纲失败:', err);
+          setSummaryContent('');
+          setOutlineContent('');
+        }
+      } else {
+        setSummaryContent('');
+        setOutlineContent('');
+      }
     } catch (error) {
       console.error('加载文件失败:', error);
       // 如果加载失败，使用默认内容
@@ -285,6 +308,9 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
       message.warning('文件加载失败，使用默认内容');
       setIsModified(true);
       setSaveStatus('unsaved');
+      // 重置总结和提纲内容
+      setSummaryContent('');
+      setOutlineContent('');
     }
   };
 
@@ -520,6 +546,220 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
     }
   }
 
+  // 生成和渲染总结内容
+  const renderSummaryContent = () => {
+    const handleGenerateSummary = async () => {
+      if (!currentNote.content?.trim()) {
+        message.warning('文件内容为空，无法生成总结');
+        return;
+      }
+
+      setSummaryLoading(true);
+      try {
+        const summary = await generateSummary(currentNote.content, 300);
+        setSummaryContent(summary);
+        message.success('总结生成成功');
+      } catch (error) {
+        console.error('生成总结失败:', error);
+        message.error('生成总结失败，请稍后重试');
+      } finally {
+        setSummaryLoading(false);
+      }
+    };
+
+    return (
+      <div>
+        <div style={{ marginBottom: '16px', textAlign: 'center' }}>
+          <Button
+            type="primary"
+            icon={<FileSearchOutlined />}
+            loading={summaryLoading}
+            onClick={handleGenerateSummary}
+            disabled={!currentNote.content?.trim()}
+          >
+            {summaryContent ? '重新生成总结' : '生成总结'}
+          </Button>
+        </div>
+        
+        {summaryLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <Spin size="large" />
+            <div style={{ marginTop: '16px', color: '#666' }}>
+              🤖 AI正在分析文档内容，生成总结...
+            </div>
+            <div style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
+              正在处理 {Math.min(currentNote.content?.length || 0, 2000)} 个字符
+            </div>
+          </div>
+        ) : summaryContent ? (
+          <div 
+            className="markdown-preview" 
+            style={{ 
+              padding: '16px',
+              backgroundColor: '#f9f9f9',
+              borderRadius: '6px',
+              border: '1px solid #e8e8e8',
+              lineHeight: '1.6'
+            }}
+          >
+            <div style={{ 
+              fontSize: '14px', 
+              color: '#666', 
+              marginBottom: '12px',
+              fontWeight: 'bold'
+            }}>
+              📄 文档总结
+            </div>
+            <div style={{ fontSize: '15px', color: '#333' }}>
+              {summaryContent}
+            </div>
+            <div style={{ 
+              marginTop: '12px', 
+              paddingTop: '12px', 
+              borderTop: '1px solid #e8e8e8',
+              textAlign: 'right'
+            }}>
+              <Button 
+                size="small" 
+                onClick={() => {
+                  navigator.clipboard.writeText(summaryContent);
+                  message.success('总结已复制到剪贴板');
+                }}
+              >
+                复制总结
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ 
+            textAlign: 'center', 
+            color: '#999', 
+            padding: '40px 0',
+            backgroundColor: '#fafafa',
+            borderRadius: '6px',
+            border: '1px dashed #d9d9d9'
+          }}>
+            <FileSearchOutlined style={{ fontSize: '32px', marginBottom: '12px' }} />
+            <div>点击上方按钮生成文档总结</div>
+            <div style={{ fontSize: '12px', marginTop: '8px' }}>
+              AI将自动分析文档内容，提取关键信息
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // 生成和渲染提纲内容
+  const renderOutlineContent = () => {
+    const handleGenerateOutline = async () => {
+      if (!currentNote.content?.trim()) {
+        message.warning('文件内容为空，无法生成提纲');
+        return;
+      }
+
+      setOutlineLoading(true);
+      try {
+        const outline = await generateOutline(currentNote.content, 15);
+        setOutlineContent(outline);
+        message.success('提纲生成成功');
+      } catch (error) {
+        console.error('生成提纲失败:', error);
+        message.error('生成提纲失败，请稍后重试');
+      } finally {
+        setOutlineLoading(false);
+      }
+    };
+
+    return (
+      <div>
+        <div style={{ marginBottom: '16px', textAlign: 'center' }}>
+          <Button
+            type="primary"
+            icon={<UnorderedListOutlined />}
+            loading={outlineLoading}
+            onClick={handleGenerateOutline}
+            disabled={!currentNote.content?.trim()}
+          >
+            {outlineContent ? '重新生成提纲' : '生成提纲'}
+          </Button>
+        </div>
+        
+        {outlineLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <Spin size="large" />
+            <div style={{ marginTop: '16px', color: '#666' }}>
+              🔍 AI正在分析文档结构，生成提纲...
+            </div>
+            <div style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
+              正在处理 {Math.min(currentNote.content?.length || 0, 3000)} 个字符
+            </div>
+          </div>
+        ) : outlineContent ? (
+          <div 
+            style={{ 
+              padding: '16px',
+              backgroundColor: '#f6ffed',
+              borderRadius: '6px',
+              border: '1px solid #b7eb8f',
+              lineHeight: '1.8'
+            }}
+          >
+            <div style={{ 
+              fontSize: '14px', 
+              color: '#52c41a', 
+              marginBottom: '12px',
+              fontWeight: 'bold'
+            }}>
+              📋 文档提纲
+            </div>
+            <pre style={{ 
+              fontSize: '14px', 
+              color: '#333',
+              margin: 0,
+              fontFamily: 'inherit',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word'
+            }}>
+              {outlineContent}
+            </pre>
+            <div style={{ 
+              marginTop: '12px', 
+              paddingTop: '12px', 
+              borderTop: '1px solid #b7eb8f',
+              textAlign: 'right'
+            }}>
+              <Button 
+                size="small" 
+                onClick={() => {
+                  navigator.clipboard.writeText(outlineContent);
+                  message.success('提纲已复制到剪贴板');
+                }}
+              >
+                复制提纲
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ 
+            textAlign: 'center', 
+            color: '#999', 
+            padding: '40px 0',
+            backgroundColor: '#fafafa',
+            borderRadius: '6px',
+            border: '1px dashed #d9d9d9'
+          }}>
+            <UnorderedListOutlined style={{ fontSize: '32px', marginBottom: '12px' }} />
+            <div>点击上方按钮生成文档提纲</div>
+            <div style={{ fontSize: '12px', marginTop: '8px' }}>
+              AI将自动提取文档结构，生成清晰的提纲
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // 计算字数（中文按字符计算，英文按单词计算）
   const getWordCount = () => {
     const content = currentNote.content || '';
@@ -668,7 +908,7 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
         borderBottom: '1px solid #f0f0f0', 
         flexShrink: 0 
       }}>
-        <Space>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <FileTextOutlined />
           <Input 
             placeholder="输入笔记标题..."
@@ -679,11 +919,20 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
               fontWeight: '500', 
               border: 'none', 
               boxShadow: 'none',
-              width: '400px',  // 增加宽度到400px（约为原来的两倍）
-              maxWidth: '60%'  // 设置最大宽度，避免在小屏幕上过宽
+              width: '400px',
+              maxWidth: '60%'
             }}
           />
-        </Space>
+        </div>
+        
+        {/* 文件标签栏 */}
+        <FileTagsBar
+          fileId={currentNote?.id}
+          filePath={currentNote?.file_path || ''}
+          fileName={currentNote?.title || ''}
+          fileContent={currentNote?.content || ''}
+          onTagsChange={() => setTagRefreshTrigger(prev => prev + 1)}
+        />
       </div>
 
       {/* 编辑器和预览区域 */}
@@ -767,6 +1016,44 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ currentFile, onFileChange }) =>
                   dangerouslySetInnerHTML={{ __html: renderMarkdown(currentNote.content) }}
                 />
               ),
+            },
+            {
+              key: 'summary',
+              label: (
+                <span>
+                  <FileSearchOutlined />
+                  总结
+                </span>
+              ),
+              children: (
+                <div style={{ 
+                  height: '100%', 
+                  overflow: 'auto', 
+                  padding: '16px',
+                  backgroundColor: '#fff'
+                }}>
+                  {renderSummaryContent()}
+                </div>
+              )
+            },
+            {
+              key: 'outline',
+              label: (
+                <span>
+                  <UnorderedListOutlined />
+                  提纲
+                </span>
+              ),
+              children: (
+                <div style={{ 
+                  height: '100%', 
+                  overflow: 'auto', 
+                  padding: '16px',
+                  backgroundColor: '#fff'
+                }}>
+                  {renderOutlineContent()}
+                </div>
+              )
             },
             {
               key: 'tags',

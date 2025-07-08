@@ -20,7 +20,9 @@ import {
   UserOutlined, 
   FileTextOutlined,
   ClockCircleOutlined,
-  SearchOutlined
+  SearchOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined
 } from '@ant-design/icons';
 import { ChatResponse } from '../services/api';
 
@@ -50,8 +52,11 @@ const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose, onSelectFile })
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const toggleFullscreen = () => setIsFullscreen(prev => !prev);
 
   // 自动滚动到底部（带防抖）
   const scrollToBottom = useCallback(() => {
@@ -298,16 +303,30 @@ const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose, onSelectFile })
       }
       open={visible}
       onCancel={onClose}
-      width={800}
+      width={isFullscreen ? '100vw' : 800}
       footer={null}
       styles={{
-        body: { height: '600px', padding: 0 },
+        body: { 
+          height: isFullscreen ? 'calc(100vh - 120px)' : '600px',
+          padding: 0 
+        },
       }}
+      style={isFullscreen ? { top: 0, padding: 0 } : undefined}
+      className={isFullscreen ? 'chat-modal-fullscreen' : undefined}
     >
+      {/* 全屏切换按钮 */}
+      <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
+        <Button 
+          type="text" 
+          icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />} 
+          onClick={toggleFullscreen}
+          style={{ position: 'absolute', top: 16, right: 60, zIndex: 10 }}
+        />
+      </Tooltip>
       <div style={{ 
         display: 'flex', 
         flexDirection: 'column', 
-        height: '600px' 
+        height: isFullscreen ? 'calc(100vh - 120px)' : '600px' 
       }}>
         {/* 消息列表 */}
         <div style={{ 
@@ -373,7 +392,8 @@ const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose, onSelectFile })
                         style={{ 
                           margin: 0, 
                           whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word'
+                          wordBreak: 'break-word',
+                          overflowWrap: 'anywhere'
                         }}
                       >
                         {message.isLoading ? (
@@ -548,6 +568,20 @@ const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose, onSelectFile })
           )}
         </div>
       </div>
+
+      {/* 额外样式 */}
+      <style>{`
+        .chat-modal-fullscreen .ant-modal-content{
+          height:100vh !important;
+          width:100vw !important;
+          max-width:100vw;
+        }
+        .ai-message-content{
+          white-space:pre-wrap;
+          word-break:break-word;
+          overflow-wrap:anywhere;
+        }
+      `}</style>
     </Modal>
   );
 };

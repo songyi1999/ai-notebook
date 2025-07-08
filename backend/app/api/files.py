@@ -12,6 +12,7 @@ from ..services.file_service import FileService
 from ..database.session import get_db
 from ..services.search_service import SearchService
 from ..config import settings
+from ..models.embedding import Embedding
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -215,22 +216,52 @@ def delete_file_by_path_api(request: dict, db: Session = Depends(get_db)):
             logger.info(f"删除文件成功: {file_path}")
             
         elif path.is_dir():
-            # 删除文件夹及其所有内容
-            # 递归删除数据库中的所有文件记录
-            for file_path_in_dir in path.rglob("*.md"):
-                relative_path = str(file_path_in_dir)
-                db_file = file_service.get_file_by_path(relative_path)
-                if db_file:
-                    file_service.delete_file(db_file.id)
-            
+            # 删除文件夹及其所有内容（增量方式，避免全量重建索引）
+            from ..services.ai_service_langchain import AIService
+            from ..services.tag_service import FileTagService
+            from ..models.link import Link
+            ai_service = AIService(db)
+            file_tag_service = FileTagService(db)
+
+            # 支持多种文本扩展名
+            file_extensions = ['*.md', '*.markdown', '*.txt']
+            for pattern in file_extensions:
+                for file_path_in_dir in path.rglob(pattern):
+                    relative_path = str(file_path_in_dir)
+                    db_file = file_service.get_file_by_path(relative_path)
+                    if not db_file:
+                        # 物理文件也要删除
+                        continue
+
+                    file_id = db_file.id
+
+                    # 1. 删除向量/嵌入
+                    try:
+                        ai_service.delete_document_by_file_id(file_id)
+                    except Exception as e:
+                        logger.warning(f"删除向量索引失败: {relative_path}, 错误: {e}")
+
+                    # 2. 删除链接（源或目标）
+                    try:
+                        db.query(Link).filter((Link.source_file_id == file_id) | (Link.target_file_id == file_id)).delete(synchronize_session=False)
+                    except Exception as e:
+                        logger.warning(f"删除链接失败: {relative_path}, 错误: {e}")
+
+                    # 3. 删除标签关联
+                    try:
+                        file_tag_service.delete_all_file_tags(file_id)
+                    except Exception as e:
+                        logger.warning(f"删除标签关联失败: {relative_path}, 错误: {e}")
+
+                    # 4. 删除文件数据库记录（硬删除）
+                    try:
+                        file_service.hard_delete_file(file_id)
+                    except Exception as e:
+                        logger.warning(f"删除数据库记录失败: {relative_path}, 错误: {e}")
+
             # 删除物理文件夹
             shutil.rmtree(path)
             logger.info(f"删除文件夹成功: {file_path}")
-        
-        # 删除后重新构建索引
-        from ..services.index_service import IndexService
-        index_service = IndexService(db)
-        index_service.rebuild_all_indexes()
         
         return {"success": True, "message": f"删除成功: {file_path}"}
         
@@ -346,5 +377,43 @@ def delete_file_api(
         db_file = file_service.delete_file(file_id=file_id)
         if db_file is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
-        return {"success": True, "message": f"文件已软删除: {db_file.file_path}"} 
- 
+        return {"success": True, "message": f"文件已软删除: {db_file.file_path}"}
+
+# ==================== 摘要 / 提纲接口 ====================
+
+# 说明：
+#  - 摘要(chunk_type = 'summary') 仅有一条，chunk_index = -1
+#  - 提纲(chunk_type = 'outline') 可多条，chunk_index 为 -1000, -999, ... 按生成顺序递增
+#  - 前端可通过 /files/{file_id}/summary 与 /files/{file_id}/outline 获取
+
+@router.get("/files/{file_id}/summary")
+def get_file_summary_api(file_id: int, db: Session = Depends(get_db)):
+    """按 file_id 获取文件的摘要内容"""
+    try:
+        summary_record = (
+            db.query(Embedding)
+            .filter(Embedding.file_id == file_id, Embedding.chunk_type == "summary")
+            .first()
+        )
+        if not summary_record:
+            return {"summary": None}
+        return {"summary": summary_record.chunk_text}
+    except Exception as e:
+        logger.error(f"获取摘要失败: {e}")
+        raise HTTPException(status_code=500, detail="获取摘要失败")
+
+@router.get("/files/{file_id}/outline")
+def get_file_outline_api(file_id: int, db: Session = Depends(get_db)):
+    """按 file_id 获取文件的提纲列表"""
+    try:
+        outline_records = (
+            db.query(Embedding)
+            .filter(Embedding.file_id == file_id, Embedding.chunk_type == "outline")
+            .order_by(Embedding.chunk_index)
+            .all()
+        )
+        outline_list = [rec.chunk_text for rec in outline_records]
+        return {"outline": outline_list}
+    except Exception as e:
+        logger.error(f"获取提纲失败: {e}")
+        raise HTTPException(status_code=500, detail="获取提纲失败") 
