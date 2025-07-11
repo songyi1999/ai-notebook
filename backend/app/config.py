@@ -32,10 +32,11 @@ class Settings(BaseSettings):
     # API配置
     api_prefix: str = "/api/v1"
     cors_origins: list = [
-        "http://localhost:3000",
-        "http://localhost:3002",
+        "http://localhost:3000",  # Standard frontend dev port
+        "http://localhost:3002",  # Alternative frontend dev port
         "http://127.0.0.1:3000",
-        "http://127.0.0.1:3002"
+        "http://127.0.0.1:3002",
+        "null"  # Allow requests from 'file://' origins
     ]
     
     # 日志配置
